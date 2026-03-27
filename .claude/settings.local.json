@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Read(//c/Users/jjhst/OneDrive/바탕 화면/b_cavior/api_carvior/**)",
+      "Read(//c/Users/jjhst/OneDrive/바탕 화면/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\jjhst\\OneDrive\\바탕 화면\\b_cavior\\carvior-back\\src\\inspection\\entities",
+      "c:\\Users\\jjhst\\OneDrive\\바탕 화면\\b_cavior\\carvior-back\\src\\inspection"
+    ]
+  }
+}

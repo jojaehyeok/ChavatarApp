@@ -1,31 +1,559 @@
-import { StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  FlatList,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  View,
+} from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import EditScreenInfo from '@/components/EditScreenInfo';
-import { Text, View } from '@/components/Themed';
+const API_BASE_URL = 'https://carvior.store/api/v1';
+const { width: SCREEN_W } = Dimensions.get('window');
 
-export default function TabOneScreen() {
+// ── 시간 슬롯 ─────────────────────────────────────────────────────────────────
+const AM_TIMES = ['08:00', '09:00', '10:00', '11:00'];
+const PM_TIMES = ['12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
+const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+// ── 유틸 ──────────────────────────────────────────────────────────────────────
+const toYMD = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const getDateStrip = (count = 30) => {
+  const result: Date[] = [];
+  const today = new Date();
+  for (let i = 0; i < count; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    result.push(d);
+  }
+  return result;
+};
+
+const formatKoreanDate = (ymd: string) => {
+  if (!ymd || ymd.length < 10) return '';
+  const d = new Date(ymd);
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
+};
+
+interface DiagnosisItem {
+  id: string | number;
+  status: string;
+  carOwner: string;
+  carNumber: string;
+  carModel?: string;
+  contact?: string;
+  address: string;
+  detailAddress: string;
+  preferredDateTime: string;
+  source: string;
+  serviceType?: string;
+  assignedDriverId?: string | null;
+  assignedDriverName?: string | null;
+  phoneNumber?: string;
+  updatedAt?: string;
+  completedAt?: string;
+}
+
+export default function DiagnosisManagement() {
+  const systemTheme = useColorScheme();
+  const isDark = systemTheme === 'dark';
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  const theme = {
+    background: isDark ? '#111' : '#f8f9fa',
+    card: isDark ? '#1a1a1a' : '#fff',
+    textMain: isDark ? '#fff' : '#000',
+    textSub: isDark ? '#888' : '#666',
+    border: isDark ? '#222' : '#eee',
+    accent: '#63489a',
+    tabBar: isDark ? '#000' : '#fff',
+    buttonSub: isDark ? '#2A2A2A' : '#f1f3f5',
+    modalBg: isDark ? '#1a1a1a' : '#fff',
+    timeSlotBg: isDark ? '#2a2a2a' : '#f0f0f0',
+  };
+
+  const [activeTab, setActiveTab] = useState<'upcoming' | 'request' | 'completed'>('upcoming');
+  const [data, setData] = useState<DiagnosisItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [isNavModalVisible, setNavModalVisible] = useState(false);
+  const [isContactModalVisible, setContactModalVisible] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<DiagnosisItem | null>(null);
+
+  const [currentDriverId, setCurrentDriverId] = useState<string | null>(null);
+  const [currentDriverName, setCurrentDriverName] = useState<string | null>(null);
+
+  // 날짜 필터 (다가오는 예약탭)
+  const [filterDate, setFilterDate] = useState<string>('all');
+
+  // 시간 변경 모달
+  const [timeChangeItem, setTimeChangeItem] = useState<DiagnosisItem | null>(null);
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState('');
+  const [timeChanging, setTimeChanging] = useState(false);
+
+  const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
+
+  useEffect(() => {
+    const getMyInfo = async () => {
+      const id = await AsyncStorage.getItem('driverId');
+      const name = await AsyncStorage.getItem('driverName');
+      setCurrentDriverId(id);
+      setCurrentDriverName(name);
+    };
+    getMyInfo();
+  }, []);
+
+  // 다가오는 예약에서 예약 있는 날짜 목록
+  const upcomingDates = useMemo(() => {
+    if (activeTab !== 'upcoming') return [];
+    const dates = data
+      .map(item => (item.preferredDateTime || '').substring(0, 10))
+      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    return [...new Set(dates)].sort();
+  }, [data, activeTab]);
+
+  // 날짜 필터 적용
+  const filteredData = useMemo(() => {
+    if (activeTab !== 'upcoming' || filterDate === 'all') return data;
+    return data.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
+  }, [data, activeTab, filterDate]);
+
+  const handleContact = async (type: 'tel' | 'sms' | 'confirm') => {
+    const rawContact = selectedItem?.contact;
+    if (!rawContact) { Alert.alert('오류', '연락처 정보가 없습니다.'); return; }
+    const phone = rawContact.replace(/[^0-9]/g, '');
+    let url = type === 'tel' ? `tel:${phone}` : `sms:${phone}`;
+    if (type === 'confirm') {
+      const message = `[카비오] 안녕하세요 진단사 ${currentDriverName}입니다. ${selectedItem?.carNumber} 차량 진단을 위해 ${selectedItem?.preferredDateTime}에 방문 예정입니다.`;
+      url += `${Platform.OS === 'ios' ? '&' : '?'}body=${encodeURIComponent(message)}`;
+    }
+    setContactModalVisible(false);
+    try { await Linking.openURL(url); } catch { Alert.alert('오류', '연결할 수 없습니다.'); }
+  };
+
+  const handleLaunchMap = async (app: 'kakao' | 'naver' | 'tmap') => {
+    if (!selectedItem) return;
+    const encoded = encodeURIComponent(selectedItem.address);
+    let url = app === 'kakao' ? `kakaomap://search?q=${encoded}` : app === 'naver' ? `nmap://search?query=${encoded}` : `tmap://search?name=${encoded}`;
+    setNavModalVisible(false);
+    try { await Linking.openURL(url); } catch { Alert.alert('앱 미설치', '해당 지도 앱이 설치되어 있지 않습니다.'); }
+  };
+
+  const fetchData = async () => {
+    if (!currentDriverId) return;
+    setLoading(true);
+    try {
+      const response = await axios.get(`${API_BASE_URL}/external/request/list`);
+      const allData = Array.isArray(response.data) ? response.data : response.data.data;
+      if (!allData) return;
+      const filtered = allData.filter((item: any) => {
+        const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
+        if (activeTab === 'request') return item.status === 'PENDING';
+        if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
+        return item.status === 'COMPLETED' && isMy;
+      });
+      setData(filtered);
+    } catch (error) { console.error(error); }
+    finally { setLoading(false); setRefreshing(false); }
+  };
+
+  // 시간 변경 모달 열기 (기존 날짜/시간 파싱)
+  const openTimeChange = (item: DiagnosisItem) => {
+    setTimeChangeItem(item);
+    const dt = item.preferredDateTime || '';
+    const parts = dt.split(' ');
+    const today = toYMD(new Date());
+    setSelectedDate(parts[0]?.match(/^\d{4}-\d{2}-\d{2}$/) ? parts[0] : today);
+    setSelectedTime(parts[1] || '');
+  };
+
+  const handleTimeChange = async () => {
+    if (!timeChangeItem || !newDateTime) {
+      Alert.alert('알림', '날짜와 시간을 모두 선택해주세요.');
+      return;
+    }
+    setTimeChanging(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${timeChangeItem.id}/status`, {
+        preferredDateTime: newDateTime,
+      });
+      Alert.alert('변경 완료', '예약 시간이 변경되었습니다.');
+      setTimeChangeItem(null);
+      fetchData();
+    } catch { Alert.alert('오류', '시간 변경에 실패했습니다.'); }
+    finally { setTimeChanging(false); }
+  };
+
+  const handleClaim = async (requestId: number) => {
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${requestId}/status`, {
+        status: 'CONFIRMED',
+        assignedDriverId: currentDriverId,
+        assignedDriverName: currentDriverName || '진단사',
+      });
+      Alert.alert('확정 완료', '내 예약 목록으로 이동합니다.');
+      setActiveTab('upcoming');
+      fetchData();
+    } catch { Alert.alert('오류', '확정 실패'); }
+  };
+
+  useEffect(() => { fetchData(); }, [activeTab, currentDriverId]);
+
+  // ── 날짜 스트립 (다가오는 예약 필터용) ──────────────────────────────────────
+  const DateFilterStrip = () => {
+    const strip = getDateStrip(30);
+    const todayYmd = toYMD(new Date());
+    return (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateStripScroll} contentContainerStyle={styles.dateStripContent}>
+        <TouchableOpacity
+          style={[styles.dateChip, filterDate === 'all' && { backgroundColor: theme.accent }]}
+          onPress={() => setFilterDate('all')}
+        >
+          <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? '#fff' : theme.textSub }]}>전체</Text>
+        </TouchableOpacity>
+        {strip.map(d => {
+          const ymd = toYMD(d);
+          const hasItems = upcomingDates.includes(ymd);
+          if (!hasItems) return null;
+          const isSelected = filterDate === ymd;
+          const isToday = ymd === todayYmd;
+          return (
+            <TouchableOpacity
+              key={ymd}
+              style={[styles.dateChip, isSelected && { backgroundColor: theme.accent }]}
+              onPress={() => setFilterDate(ymd)}
+            >
+              <Text style={[styles.dateChipDay, { color: isSelected ? '#fff' : theme.textSub }]}>
+                {isToday ? '오늘' : DAY_KO[d.getDay()]}
+              </Text>
+              <Text style={[styles.dateChipNum, { color: isSelected ? '#fff' : theme.textMain }]}>
+                {d.getDate()}
+              </Text>
+              {hasItems && !isSelected && <View style={[styles.dateChipDot, { backgroundColor: theme.accent }]} />}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    );
+  };
+
+  const renderButtons = (item: DiagnosisItem) => {
+    if (activeTab === 'request') {
+      return (
+        <TouchableOpacity style={[styles.mainBtn, { backgroundColor: theme.accent }]} onPress={() => handleClaim(Number(item.id))}>
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>내 담당으로 확정하기</Text>
+        </TouchableOpacity>
+      );
+    }
+    if (activeTab === 'upcoming') {
+      return (
+        <View style={{ gap: 8 }}>
+          <View style={styles.btnGroup}>
+            <TouchableOpacity style={[styles.subCardBtn, { backgroundColor: theme.buttonSub }]} onPress={() => { setSelectedItem(item); setContactModalVisible(true); }}>
+              <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>연락하기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.subCardBtn, { backgroundColor: theme.buttonSub }]} onPress={() => { setSelectedItem(item); setNavModalVisible(true); }}>
+              <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>길 찾기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.subCardBtn, { backgroundColor: isDark ? '#1e3a5f' : '#dbeafe' }]}
+              onPress={() => openTimeChange(item)}
+            >
+              <Text style={{ color: isDark ? '#93c5fd' : '#1d4ed8', fontWeight: 'bold' }}>시간 변경</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={[styles.mainBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '' } })}
+          >
+            <Text style={{ color: isDark ? '#000' : '#fff', fontWeight: 'bold' }}>진단 시작</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    const completedTime = item.completedAt || item.updatedAt;
+    const canEdit = completedTime
+      ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000
+      : false;
+    return (
+      <View style={styles.btnGroup}>
+        <TouchableOpacity
+          style={[styles.subBtn, { flex: canEdit ? 1 : undefined, width: canEdit ? undefined : '100%', backgroundColor: theme.buttonSub }]}
+          onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view' } })}
+        >
+          <Text style={[styles.subBtnText, { color: theme.textSub }]}>진단 내역 보기</Text>
+        </TouchableOpacity>
+        {canEdit && (
+          <TouchableOpacity
+            style={[styles.subBtn, { flex: 1, backgroundColor: theme.accent }]}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit' } })}
+          >
+            <Text style={[styles.subBtnText, { color: '#fff' }]}>수정하기</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Tab One</Text>
-      <View style={styles.separator} lightColor="#eee" darkColor="rgba(255,255,255,0.1)" />
-      <EditScreenInfo path="app/(tabs)/index.tsx" />
-    </View>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.tabBar }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+
+        {/* 탭바 */}
+        <View style={[styles.tabBar, { backgroundColor: theme.tabBar, borderBottomColor: theme.border }]}>
+          {(['upcoming', 'request', 'completed'] as const).map((tab) => (
+            <TouchableOpacity key={tab} onPress={() => { setActiveTab(tab); setFilterDate('all'); }} style={[styles.tabItem, activeTab === tab && { borderBottomColor: isDark ? theme.accent : '#000', borderBottomWidth: 2 }]}>
+              <Text style={[styles.tabText, { color: activeTab === tab ? theme.textMain : theme.textSub }]}>
+                {tab === 'upcoming' ? '다가오는 예약' : tab === 'request' ? '예약 요청' : '완료된 예약'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* 다가오는 예약 날짜 필터 스트립 */}
+        {activeTab === 'upcoming' && upcomingDates.length > 0 && <DateFilterStrip />}
+
+        <FlatList
+          data={filteredData}
+          renderItem={({ item }) => (
+            <View style={[styles.card, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
+              <View style={styles.cardHeader}>
+                <Text style={[styles.cardTitle, { color: theme.textMain }]}>{item.carModel || '차량 정보 없음'}</Text>
+                <Text style={[styles.statusBadge, { color: theme.accent }]}>{item.status}</Text>
+              </View>
+              <View style={styles.infoSection}>
+                <View style={styles.infoRow}><Text style={styles.label}>차량번호</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text></View>
+                <View style={styles.infoRow}><Text style={styles.label}>위치</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.address}</Text></View>
+                <View style={styles.infoRow}><Text style={styles.label}>시간</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.preferredDateTime}</Text></View>
+              </View>
+              {renderButtons(item)}
+            </View>
+          )}
+          keyExtractor={item => item.id.toString()}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} tintColor={theme.accent} />}
+          ListEmptyComponent={!loading ? (
+            <View style={styles.emptyWrap}>
+              <Text style={[styles.emptyText, { color: theme.textSub }]}>
+                {filterDate !== 'all' ? `${formatKoreanDate(filterDate)}에 예약이 없습니다.` : '해당 예약이 없습니다.'}
+              </Text>
+            </View>
+          ) : null}
+        />
+
+        {/* ── 시간 변경 모달 (풀스크린) ───────────────────────────────────── */}
+        <Modal visible={!!timeChangeItem} animationType="slide" transparent={false}>
+          <SafeAreaView style={[styles.timeModalSafe, { backgroundColor: theme.modalBg }]}>
+            {/* 헤더 */}
+            <View style={styles.timeModalHeader}>
+              <TouchableOpacity onPress={() => setTimeChangeItem(null)} style={styles.timeModalClose}>
+                <Ionicons name="close" size={26} color={theme.textMain} />
+              </TouchableOpacity>
+              <Text style={[styles.timeModalTitle, { color: theme.textMain }]}>예약 시간 변경</Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              {/* 선택된 날짜 표시 */}
+              <View style={styles.timeModalDateHeader}>
+                <Text style={[styles.timeModalDateText, { color: theme.textMain }]}>
+                  {selectedDate ? formatKoreanDate(selectedDate) : '날짜를 선택해 주세요.'}
+                </Text>
+                <Text style={[styles.timeModalSub, { color: theme.textSub }]}>
+                  {selectedDate ? '시간을 선택해 주세요.' : ''}
+                </Text>
+              </View>
+
+              {/* 날짜 가로 스트립 */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeDateScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+                {getDateStrip(30).map(d => {
+                  const ymd = toYMD(d);
+                  const isSelected = selectedDate === ymd;
+                  const isToday = ymd === toYMD(new Date());
+                  return (
+                    <TouchableOpacity
+                      key={ymd}
+                      style={[styles.timeDateChip, { backgroundColor: isSelected ? theme.textMain : theme.timeSlotBg }]}
+                      onPress={() => setSelectedDate(ymd)}
+                    >
+                      <Text style={[styles.timeDateChipDay, { color: isSelected ? theme.modalBg : theme.textSub }]}>
+                        {isToday ? '오늘' : DAY_KO[d.getDay()]}
+                      </Text>
+                      <Text style={[styles.timeDateChipNum, { color: isSelected ? theme.modalBg : theme.textMain }]}>
+                        {d.getDate()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <View style={[styles.timeDivider, { backgroundColor: theme.border }]} />
+
+              {/* 오전 */}
+              <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오전</Text>
+              <View style={styles.timeGrid}>
+                {AM_TIMES.map(t => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.timeSlotBtn, { backgroundColor: selectedTime === t ? theme.textMain : theme.timeSlotBg }]}
+                    onPress={() => setSelectedTime(t)}
+                  >
+                    <Text style={[styles.timeSlotText, { color: selectedTime === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* 오후 */}
+              <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오후</Text>
+              <View style={styles.timeGrid}>
+                {PM_TIMES.map(t => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.timeSlotBtn, { backgroundColor: selectedTime === t ? theme.textMain : theme.timeSlotBg }]}
+                    onPress={() => setSelectedTime(t)}
+                  >
+                    <Text style={[styles.timeSlotText, { color: selectedTime === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={{ height: 120 }} />
+            </ScrollView>
+
+            {/* 하단 변경하기 버튼 */}
+            <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
+              <TouchableOpacity
+                style={[styles.timeConfirmBtn, { backgroundColor: newDateTime ? theme.accent : (isDark ? '#333' : '#ddd') }]}
+                onPress={handleTimeChange}
+                disabled={!newDateTime || timeChanging}
+              >
+                {timeChanging
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={[styles.timeConfirmText, { color: newDateTime ? '#fff' : theme.textSub }]}>변경하기</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </Modal>
+
+        {/* ── 연락 / 길찾기 모달 ──────────────────────────────────────────── */}
+        <Modal visible={isContactModalVisible || isNavModalVisible} transparent animationType="slide">
+          <Pressable style={styles.modalOverlay} onPress={() => { setContactModalVisible(false); setNavModalVisible(false); }}>
+            <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
+              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>{isContactModalVisible ? '차주에게 연락' : '길찾기 앱 선택'}</Text>
+              {isContactModalVisible ? (
+                <>
+                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel')}><Ionicons name="call" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>전화하기</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>문자 보내기</Text></TouchableOpacity>
+                </>
+              ) : (
+                <View style={styles.mapGroup}>
+                  <TouchableOpacity style={styles.mapItem} onPress={() => handleLaunchMap('kakao')}><View style={[styles.mapIcon, { backgroundColor: '#FEE500' }]}><Ionicons name="chatbubble" size={20} color="#3C1E1E" /></View><Text style={{ color: theme.textMain }}>카카오</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.mapItem} onPress={() => handleLaunchMap('naver')}><View style={[styles.mapIcon, { backgroundColor: '#03C75A' }]}><Text style={{ color: '#fff', fontWeight: 'bold' }}>N</Text></View><Text style={{ color: theme.textMain }}>네이버</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.mapItem} onPress={() => handleLaunchMap('tmap')}><View style={[styles.mapIcon, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#eee' }]}><Ionicons name="navigate" size={20} color="#FF0000" /></View><Text style={{ color: theme.textMain }}>TMAP</Text></TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </Pressable>
+        </Modal>
+
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  separator: {
-    marginVertical: 30,
-    height: 1,
-    width: '80%',
-  },
+  safeArea: { flex: 1 },
+  container: { flex: 1 },
+
+  // 탭바
+  tabBar: { flexDirection: 'row', borderBottomWidth: 1 },
+  tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
+  tabText: { fontSize: 15, fontWeight: 'bold' },
+
+  // 날짜 필터 스트립 (다가오는 예약)
+  dateStripScroll: { maxHeight: 80, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
+  dateStripContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8, alignItems: 'center' },
+  dateChip: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, minWidth: 48, backgroundColor: 'transparent' },
+  dateChipDay: { fontSize: 11, fontWeight: '600' },
+  dateChipNum: { fontSize: 17, fontWeight: 'bold' },
+  dateChipDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
+
+  // 카드
+  card: { padding: 20, borderBottomWidth: 1 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
+  cardTitle: { fontSize: 18, fontWeight: 'bold' },
+  statusBadge: { fontSize: 12, fontWeight: 'bold' },
+  infoSection: { marginBottom: 20 },
+  infoRow: { flexDirection: 'row', marginBottom: 6 },
+  label: { color: '#888', width: 70, fontSize: 14 },
+  value: { flex: 1, fontSize: 14 },
+
+  // 버튼
+  btnGroup: { flexDirection: 'row', gap: 8 },
+  subCardBtn: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center' },
+  mainBtn: { padding: 15, borderRadius: 8, alignItems: 'center' },
+  subBtn: { padding: 12, borderRadius: 8, alignItems: 'center' },
+  subBtnText: { fontWeight: 'bold' },
+
+  // 빈 목록
+  emptyWrap: { alignItems: 'center', paddingTop: 60 },
+  emptyText: { fontSize: 15 },
+
+  // 시간 변경 모달
+  timeModalSafe: { flex: 1 },
+  timeModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14 },
+  timeModalClose: { padding: 4 },
+  timeModalTitle: { fontSize: 18, fontWeight: 'bold' },
+  timeModalDateHeader: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+  timeModalDateText: { fontSize: 22, fontWeight: 'bold' },
+  timeModalSub: { fontSize: 14, marginTop: 4 },
+  timeDateScroll: { marginTop: 16, marginBottom: 4 },
+  timeDateChip: { width: 56, height: 70, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  timeDateChipDay: { fontSize: 12, fontWeight: '600' },
+  timeDateChipNum: { fontSize: 20, fontWeight: 'bold' },
+  timeDivider: { height: 1, marginHorizontal: 20, marginVertical: 16 },
+  ampmLabel: { fontSize: 16, fontWeight: 'bold', paddingHorizontal: 20, marginBottom: 12 },
+  timeGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 10, marginBottom: 20 },
+  timeSlotBtn: { width: (SCREEN_W - 16 * 2 - 10 * 2) / 3, paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+  timeSlotText: { fontSize: 16, fontWeight: '600' },
+  timeModalBottom: { paddingHorizontal: 20, paddingVertical: 16, borderTopWidth: 1 },
+  timeConfirmBtn: { height: 54, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  timeConfirmText: { fontSize: 17, fontWeight: 'bold' },
+
+  // 연락/길찾기 모달
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 50 },
+  modalHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
+  contactOption: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 0.5, borderBottomColor: '#333' },
+  contactOptionText: { fontSize: 16, marginLeft: 15 },
+  mapGroup: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 10 },
+  mapItem: { alignItems: 'center' },
+  mapIcon: { width: 50, height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
 });
