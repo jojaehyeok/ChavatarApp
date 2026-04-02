@@ -1,7 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import Constants from 'expo-constants';
+import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
+
+// Expo Go에서는 push 알림 미지원 (SDK 53+)
+const IS_EXPO_GO = Constants.appOwnership === 'expo';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -24,6 +29,18 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const API_BASE_URL = 'https://carvior.store/api/v1';
+
+// 앱이 포그라운드 상태에서도 알림 배너 표시 (Expo Go 제외)
+if (!IS_EXPO_GO) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 const { width: SCREEN_W } = Dimensions.get('window');
 
 // ── 시간 슬롯 ─────────────────────────────────────────────────────────────────
@@ -99,6 +116,9 @@ export default function DiagnosisManagement() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // 완료된 예약 별점 캐시: { [bookingId]: rating }
+  const [ratingMap, setRatingMap] = useState<Record<string, number>>({});
+
   const [isNavModalVisible, setNavModalVisible] = useState(false);
   const [isContactModalVisible, setContactModalVisible] = useState(false);
   const [selectedItem, setSelectedItem] = useState<DiagnosisItem | null>(null);
@@ -115,7 +135,19 @@ export default function DiagnosisManagement() {
   const [selectedTime, setSelectedTime] = useState('');
   const [timeChanging, setTimeChanging] = useState(false);
 
+  // 더 보기 / 예약 취소 모달
+  const [moreOptionsItem, setMoreOptionsItem] = useState<DiagnosisItem | null>(null);
+  const [cancelItem, setCancelItem] = useState<DiagnosisItem | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
   const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
+
+const CANCEL_REASONS = [
+  { id: '진단사 사정', label: '진단사 사정' },
+  { id: '판매자의 예약 취소', label: '판매자의 예약 취소' },
+  { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
+];
 
   useEffect(() => {
     const getMyInfo = async () => {
@@ -125,6 +157,38 @@ export default function DiagnosisManagement() {
       setCurrentDriverName(name);
     };
     getMyInfo();
+  }, []);
+
+  // ── 푸시 알림 토큰 등록 (빌드앱 전용, Expo Go 제외) ────────────────────
+  useEffect(() => {
+    if (IS_EXPO_GO) return; // Expo Go에서는 동작 안 함
+
+    const registerPushToken = async () => {
+      const driverId = await AsyncStorage.getItem('driverId');
+      if (!driverId) return;
+
+      const { status: existing } = await Notifications.getPermissionsAsync();
+      let finalStatus = existing;
+      if (existing !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      if (finalStatus !== 'granted') return;
+
+      const tokenData = await Notifications.getExpoPushTokenAsync();
+      const pushToken = tokenData.data;
+
+      await axios.patch(`${API_BASE_URL}/drivers/${driverId}/push-token`, { pushToken })
+        .catch(() => {});
+    };
+
+    registerPushToken();
+
+    // 알림 탭 시 다가오는 예약 탭으로 이동
+    const sub = Notifications.addNotificationResponseReceivedListener(() => {
+      setActiveTab('upcoming');
+    });
+    return () => sub.remove();
   }, []);
 
   // 다가오는 예약에서 예약 있는 날짜 목록
@@ -221,7 +285,36 @@ export default function DiagnosisManagement() {
     } catch { Alert.alert('오류', '확정 실패'); }
   };
 
+  const handleCancel = async () => {
+    if (!cancelItem || !cancelReason) return;
+    setCancelling(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${cancelItem.id}/status`, {
+        status: 'CANCELLED',
+        cancelReason,
+      });
+      Alert.alert('취소 완료', '예약이 취소되었습니다.');
+      setCancelItem(null);
+      setCancelReason('');
+      fetchData();
+    } catch { Alert.alert('오류', '예약 취소에 실패했습니다.'); }
+    finally { setCancelling(false); }
+  };
+
   useEffect(() => { fetchData(); }, [activeTab, currentDriverId]);
+
+  // 완료 탭 진입 시 오늘 리뷰 평점 조회
+  useEffect(() => {
+    if (activeTab !== 'completed' || !currentDriverId) return;
+    axios.get(`${API_BASE_URL}/reviews/driver/${currentDriverId}/today`)
+      .then(res => {
+        const reviews: { bookingId: number; rating: number }[] = res.data?.reviews || [];
+        const map: Record<string, number> = {};
+        reviews.forEach(r => { map[String(r.bookingId)] = r.rating; });
+        setRatingMap(map);
+      })
+      .catch(() => {});
+  }, [activeTab, currentDriverId]);
 
   // ── 날짜 스트립 (다가오는 예약 필터용) ──────────────────────────────────────
   const DateFilterStrip = () => {
@@ -271,23 +364,15 @@ export default function DiagnosisManagement() {
     }
     if (activeTab === 'upcoming') {
       return (
-        <View style={{ gap: 8 }}>
-          <View style={styles.btnGroup}>
-            <TouchableOpacity style={[styles.subCardBtn, { backgroundColor: theme.buttonSub }]} onPress={() => { setSelectedItem(item); setContactModalVisible(true); }}>
-              <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>연락하기</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.subCardBtn, { backgroundColor: theme.buttonSub }]} onPress={() => { setSelectedItem(item); setNavModalVisible(true); }}>
-              <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>길 찾기</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.subCardBtn, { backgroundColor: isDark ? '#1e3a5f' : '#dbeafe' }]}
-              onPress={() => openTimeChange(item)}
-            >
-              <Text style={{ color: isDark ? '#93c5fd' : '#1d4ed8', fontWeight: 'bold' }}>시간 변경</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={styles.btnGroup}>
+          <TouchableOpacity style={[styles.subCardBtn, { backgroundColor: theme.buttonSub }]} onPress={() => { setSelectedItem(item); setContactModalVisible(true); }}>
+            <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>연락하기</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.subCardBtn, { backgroundColor: theme.buttonSub }]} onPress={() => { setSelectedItem(item); setNavModalVisible(true); }}>
+            <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>길 찾기</Text>
+          </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.mainBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
+            style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
             onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '' } })}
           >
             <Text style={{ color: isDark ? '#000' : '#fff', fontWeight: 'bold' }}>진단 시작</Text>
@@ -299,22 +384,31 @@ export default function DiagnosisManagement() {
     const canEdit = completedTime
       ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000
       : false;
+    const itemRating = ratingMap[String(item.id)];
     return (
-      <View style={styles.btnGroup}>
-        <TouchableOpacity
-          style={[styles.subBtn, { flex: canEdit ? 1 : undefined, width: canEdit ? undefined : '100%', backgroundColor: theme.buttonSub }]}
-          onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view' } })}
-        >
-          <Text style={[styles.subBtnText, { color: theme.textSub }]}>진단 내역 보기</Text>
-        </TouchableOpacity>
-        {canEdit && (
-          <TouchableOpacity
-            style={[styles.subBtn, { flex: 1, backgroundColor: theme.accent }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit' } })}
-          >
-            <Text style={[styles.subBtnText, { color: '#fff' }]}>수정하기</Text>
-          </TouchableOpacity>
+      <View style={{ gap: 8 }}>
+        {itemRating !== undefined && (
+          <View style={[styles.ratingBadge, { backgroundColor: isDark ? '#1a2a1a' : '#f0fdf4' }]}>
+            <Text style={{ fontSize: 14 }}>{'★'.repeat(itemRating)}{'☆'.repeat(5 - itemRating)}</Text>
+            <Text style={{ color: '#16a34a', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>{itemRating}점 리뷰 받음</Text>
+          </View>
         )}
+        <View style={styles.btnGroup}>
+          <TouchableOpacity
+            style={[styles.subBtn, { flex: canEdit ? 1 : undefined, width: canEdit ? undefined : '100%', backgroundColor: theme.buttonSub }]}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view' } })}
+          >
+            <Text style={[styles.subBtnText, { color: theme.textSub }]}>진단 내역 보기</Text>
+          </TouchableOpacity>
+          {canEdit && (
+            <TouchableOpacity
+              style={[styles.subBtn, { flex: 1, backgroundColor: theme.accent }]}
+              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit' } })}
+            >
+              <Text style={[styles.subBtnText, { color: '#fff' }]}>수정하기</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     );
   };
@@ -344,7 +438,12 @@ export default function DiagnosisManagement() {
             <View style={[styles.card, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
               <View style={styles.cardHeader}>
                 <Text style={[styles.cardTitle, { color: theme.textMain }]}>{item.carModel || '차량 정보 없음'}</Text>
-                <Text style={[styles.statusBadge, { color: theme.accent }]}>{item.status}</Text>
+                {activeTab === 'upcoming'
+                  ? <TouchableOpacity onPress={() => setMoreOptionsItem(item)} style={{ padding: 4 }}>
+                      <Ionicons name="ellipsis-vertical" size={20} color={theme.textSub} />
+                    </TouchableOpacity>
+                  : <Text style={[styles.statusBadge, { color: theme.accent }]}>{item.status}</Text>
+                }
               </View>
               <View style={styles.infoSection}>
                 <View style={styles.infoRow}><Text style={styles.label}>차량번호</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text></View>
@@ -482,6 +581,103 @@ export default function DiagnosisManagement() {
           </Pressable>
         </Modal>
 
+        {/* ── 더 보기 바텀 시트 ───────────────────────────────────────────── */}
+        <Modal visible={!!moreOptionsItem} transparent animationType="slide">
+          <Pressable style={styles.modalOverlay} onPress={() => setMoreOptionsItem(null)}>
+            <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
+              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>더 보기</Text>
+              <TouchableOpacity
+                style={styles.contactOption}
+                onPress={() => {
+                  const item = moreOptionsItem!;
+                  setMoreOptionsItem(null);
+                  setTimeout(() => openTimeChange(item), 300);
+                }}
+              >
+                <Ionicons name="time-outline" size={22} color={theme.accent} />
+                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>시간 변경</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.contactOption, { borderBottomWidth: 0 }]}
+                onPress={() => {
+                  const item = moreOptionsItem;
+                  setMoreOptionsItem(null);
+                  setTimeout(() => { setCancelItem(item); setCancelReason(''); }, 300);
+                }}
+              >
+                <Ionicons name="close-circle-outline" size={22} color="#e53e3e" />
+                <Text style={[styles.contactOptionText, { color: '#e53e3e' }]}>예약 취소</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Modal>
+
+        {/* ── 예약 취소 사유 모달 (풀스크린) ─────────────────────────────── */}
+        <Modal visible={!!cancelItem} animationType="slide" transparent={false}>
+          <SafeAreaView style={[styles.timeModalSafe, { backgroundColor: theme.modalBg }]}>
+            <View style={styles.timeModalHeader}>
+              <TouchableOpacity onPress={() => { setCancelItem(null); setCancelReason(''); }} style={styles.timeModalClose}>
+                <Ionicons name="chevron-back" size={26} color={theme.textMain} />
+              </TouchableOpacity>
+              <View style={{ width: 40 }} />
+            </View>
+
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.timeModalTitle, { color: theme.textMain, paddingHorizontal: 20, paddingTop: 4, paddingBottom: 20, fontSize: 22 }]}>
+                예약 취소 사유를{'\n'}선택해 주세요
+              </Text>
+
+              {/* 예약 정보 */}
+              <View style={styles.cancelInfoBox}>
+                {[
+                  { label: '차종', value: cancelItem?.carModel || '-' },
+                  { label: '차량 번호', value: cancelItem?.carNumber || '-' },
+                  { label: '위치', value: cancelItem ? `${cancelItem.address}${cancelItem.detailAddress ? ` ${cancelItem.detailAddress}` : ''}` : '-' },
+                  { label: '시간', value: cancelItem?.preferredDateTime || '-' },
+                ].map(row => (
+                  <View key={row.label} style={styles.cancelInfoRow}>
+                    <Text style={[styles.cancelInfoLabel, { color: theme.textSub }]}>{row.label}</Text>
+                    <Text style={[styles.cancelInfoValue, { color: theme.textMain }]}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={[styles.cancelDivider, { backgroundColor: theme.border }]} />
+
+              {/* 취소 사유 선택 */}
+              {CANCEL_REASONS.map(reason => {
+                const selected = cancelReason === reason.id;
+                return (
+                  <TouchableOpacity key={reason.id} style={styles.cancelOption} onPress={() => setCancelReason(reason.id)}>
+                    <View style={[styles.cancelRadio, { borderColor: selected ? theme.accent : '#888' }]}>
+                      {selected && <View style={[styles.cancelRadioInner, { backgroundColor: theme.accent }]} />}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.cancelOptionText, { color: theme.textMain }]}>{reason.label}</Text>
+                      {reason.note && <Text style={[styles.cancelOptionNote, { color: theme.textSub }]}>{reason.note}</Text>}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+              <View style={{ height: 120 }} />
+            </ScrollView>
+
+            <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
+              <TouchableOpacity
+                style={[styles.timeConfirmBtn, { backgroundColor: cancelReason ? '#e53e3e' : (isDark ? '#333' : '#ddd') }]}
+                onPress={handleCancel}
+                disabled={!cancelReason || cancelling}
+              >
+                {cancelling
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={[styles.timeConfirmText, { color: cancelReason ? '#fff' : theme.textSub }]}>예약 취소</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </Modal>
+
       </View>
     </SafeAreaView>
   );
@@ -556,4 +752,22 @@ const styles = StyleSheet.create({
   mapGroup: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 10 },
   mapItem: { alignItems: 'center' },
   mapIcon: { width: 50, height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+
+  // 더 보기 버튼
+  moreBtn: { width: 46, height: 46, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+
+  // 별점 뱃지
+  ratingBadge: { flexDirection: 'row', alignItems: 'center', padding: 8, borderRadius: 8 },
+
+  // 취소 사유 모달
+  cancelInfoBox: { backgroundColor: 'transparent', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, gap: 6 },
+  cancelInfoRow: { flexDirection: 'row', marginBottom: 4 },
+  cancelInfoLabel: { color: '#888', width: 70, fontSize: 14 },
+  cancelInfoValue: { flex: 1, fontSize: 14 },
+  cancelDivider: { height: 1, marginHorizontal: 20, marginVertical: 8 },
+  cancelOption: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 20, paddingVertical: 18, gap: 14 },
+  cancelOptionText: { fontSize: 16, fontWeight: '600' },
+  cancelOptionNote: { fontSize: 13, marginTop: 3 },
+  cancelRadio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  cancelRadioInner: { width: 10, height: 10, borderRadius: 5 },
 });

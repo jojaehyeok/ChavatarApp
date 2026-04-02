@@ -53,15 +53,15 @@ const CHECK_POSITIONS = [
 // 탭 사이클: 빈칸 → X(교환) → B(판금) → W(용접) → 빈칸
 const CYCLE = [
   { symbol: null, label: '',  bgColor: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.35)' },
-  { symbol: 'X',  label: 'X', bgColor: 'rgba(239,68,68,0.35)',   border: '#ef4444' },
-  { symbol: 'B',  label: 'B', bgColor: 'rgba(139,92,246,0.35)',  border: '#8b5cf6' },
-  { symbol: 'W',  label: 'W', bgColor: 'rgba(59,130,246,0.35)',  border: '#3b82f6' },
+  { symbol: 'X',  label: 'X', bgColor: '#ef4444', border: '#ef4444' },
+  { symbol: 'B',  label: 'B', bgColor: '#8b5cf6', border: '#8b5cf6' },
+  { symbol: 'W',  label: 'W', bgColor: '#3b82f6', border: '#3b82f6' },
 ];
 
 const SYMBOL_TEXT_COLOR: Record<string, string> = {
-  X: '#ff6b6b',
-  B: '#a78bfa',
-  W: '#60a5fa',
+  X: '#ffffff',
+  B: '#ffffff',
+  W: '#ffffff',
 };
 
 const symbolToIndex = (s: string | null) => {
@@ -122,6 +122,7 @@ export default function CarEvaluationDamageChecker({
                 top:             heightRatio * pos.y,
                 width:           boxSize,
                 height:          boxSize,
+                borderRadius:    boxSize / 2,
                 borderColor:     state.border,
                 backgroundColor: state.bgColor,
               },
@@ -149,7 +150,6 @@ export default function CarEvaluationDamageChecker({
 const styles = StyleSheet.create({
   checkBox: {
     position: 'absolute',
-    borderRadius: 6,
     borderWidth: 1.5,
     justifyContent: 'center',
     alignItems: 'center',

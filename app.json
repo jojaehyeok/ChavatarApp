@@ -34,7 +34,7 @@
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
         "android.permission.READ_MEDIA_AUDIO"
       ],
-      "versionCode": 8
+      "versionCode": 10
     },
     "web": {
       "bundler": "metro",
@@ -59,7 +59,15 @@
           "isAccessMediaLocationEnabled": false
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#63489a",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
