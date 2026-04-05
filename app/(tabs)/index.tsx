@@ -2,11 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 
 // Expo Go에서는 push 알림 미지원 (SDK 53+)
+// ⚠️ static import 금지: expo-notifications 로드 시점에 사이드이펙트로 크래시 발생
+// IS_EXPO_GO 판별 후 조건부 require 로 로드해야 함
 const IS_EXPO_GO = Constants.appOwnership === 'expo';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const Notifications = IS_EXPO_GO ? null : (require('expo-notifications') as typeof import('expo-notifications'));
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,7 +35,7 @@ const API_BASE_URL = 'https://carvior.store/api/v1';
 
 // 앱이 포그라운드 상태에서도 알림 배너 표시 (Expo Go 제외)
 if (!IS_EXPO_GO) {
-  Notifications.setNotificationHandler({
+  Notifications?.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowBanner: true,
       shouldShowList: true,
@@ -164,31 +167,39 @@ const CANCEL_REASONS = [
     if (IS_EXPO_GO) return; // Expo Go에서는 동작 안 함
 
     const registerPushToken = async () => {
-      const driverId = await AsyncStorage.getItem('driverId');
-      if (!driverId) return;
+      try {
+        const driverId = await AsyncStorage.getItem('driverId');
+        if (!driverId) return;
 
-      const { status: existing } = await Notifications.getPermissionsAsync();
-      let finalStatus = existing;
-      if (existing !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
+        const { status: existing } = await Notifications!.getPermissionsAsync();
+        let finalStatus = existing;
+        if (existing !== 'granted') {
+          const { status } = await Notifications!.requestPermissionsAsync();
+          finalStatus = status;
+        }
+        if (finalStatus !== 'granted') return;
+
+        const tokenData = await Notifications!.getDevicePushTokenAsync();
+        const pushToken = tokenData.data;
+
+        await axios.patch(`${API_BASE_URL}/drivers/${driverId}/push-token`, { pushToken })
+          .catch(() => {});
+      } catch (_e) {
+        // 알림 미지원 환경에서 조용히 무시
       }
-      if (finalStatus !== 'granted') return;
-
-      const tokenData = await Notifications.getExpoPushTokenAsync();
-      const pushToken = tokenData.data;
-
-      await axios.patch(`${API_BASE_URL}/drivers/${driverId}/push-token`, { pushToken })
-        .catch(() => {});
     };
 
     registerPushToken();
 
-    // 알림 탭 시 다가오는 예약 탭으로 이동
-    const sub = Notifications.addNotificationResponseReceivedListener(() => {
-      setActiveTab('upcoming');
-    });
-    return () => sub.remove();
+    let sub: { remove: () => void } | null | undefined = null;
+    try {
+      // 알림 탭 시 다가오는 예약 탭으로 이동
+      sub = Notifications?.addNotificationResponseReceivedListener(() => {
+        setActiveTab('upcoming');
+      });
+    } catch (_e) {}
+
+    return () => { try { sub?.remove(); } catch (_e) {} };
   }, []);
 
   // 다가오는 예약에서 예약 있는 날짜 목록
@@ -292,6 +303,7 @@ const CANCEL_REASONS = [
       await axios.patch(`${API_BASE_URL}/external/request/${cancelItem.id}/status`, {
         status: 'CANCELLED',
         cancelReason,
+        cancelledByDriver: true,
       });
       Alert.alert('취소 완료', '예약이 취소되었습니다.');
       setCancelItem(null);
@@ -320,10 +332,24 @@ const CANCEL_REASONS = [
   const DateFilterStrip = () => {
     const strip = getDateStrip(30);
     const todayYmd = toYMD(new Date());
+    const chipCount = 1 + upcomingDates.length;
+    const GAP = 8;
+    const PADDING = 24;
+    const MIN_W = 56;
+    const chipW = Math.floor((SCREEN_W - PADDING - GAP * (chipCount - 1)) / chipCount);
+    const fitsInScreen = chipW >= MIN_W;
+    const finalChipW = fitsInScreen ? chipW : MIN_W;
+
     return (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateStripScroll} contentContainerStyle={styles.dateStripContent}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.dateStripScroll}
+        contentContainerStyle={[styles.dateStripContent, fitsInScreen && { width: SCREEN_W }]}
+        scrollEnabled={!fitsInScreen}
+      >
         <TouchableOpacity
-          style={[styles.dateChip, filterDate === 'all' && { backgroundColor: theme.accent }]}
+          style={[styles.dateChip, { width: finalChipW }, filterDate === 'all' && { backgroundColor: theme.accent }]}
           onPress={() => setFilterDate('all')}
         >
           <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? '#fff' : theme.textSub }]}>전체</Text>
@@ -337,7 +363,7 @@ const CANCEL_REASONS = [
           return (
             <TouchableOpacity
               key={ymd}
-              style={[styles.dateChip, isSelected && { backgroundColor: theme.accent }]}
+              style={[styles.dateChip, { width: finalChipW }, isSelected && { backgroundColor: theme.accent }]}
               onPress={() => setFilterDate(ymd)}
             >
               <Text style={[styles.dateChipDay, { color: isSelected ? '#fff' : theme.textSub }]}>
@@ -694,8 +720,8 @@ const styles = StyleSheet.create({
 
   // 날짜 필터 스트립 (다가오는 예약)
   dateStripScroll: { maxHeight: 80, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
-  dateStripContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8, alignItems: 'center' },
-  dateChip: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, minWidth: 48, backgroundColor: 'transparent' },
+  dateStripContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8, alignItems: 'stretch' },
+  dateChip: { height: 60, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: 'transparent' },
   dateChipDay: { fontSize: 11, fontWeight: '600' },
   dateChipNum: { fontSize: 17, fontWeight: 'bold' },
   dateChipDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },

@@ -53,6 +53,8 @@ interface _UploadTask {
   requestId: string;
   carNumber: string;
 }
+const SINGLE_IMG_CATS = ['dashboard', 'registration', 'vin', 'extra_memo'];
+
 const _G = {
   queue: [] as _UploadTask[],
   active: 0,
@@ -61,6 +63,9 @@ const _G = {
     | ((uri: string, url: string, cat: string) => void)
     | undefined,
   onCount: null as unknown as ((n: number) => void) | undefined,
+  onClassified: null as unknown as
+    | ((from: string, to: string, label: string) => void)
+    | undefined,
 };
 
 const _runTask = async (task: _UploadTask) => {
@@ -83,12 +88,31 @@ const _runTask = async (task: _UploadTask) => {
     const data = await res.json();
     const s3url: string = data.url;
     if (!s3url) return;
-    _G.onResult?.(task.uri, s3url, task.categoryId);
+
+    let finalCat = task.categoryId;
+    if (!SINGLE_IMG_CATS.includes(task.categoryId)) {
+      try {
+        const classRes = await fetch(`${API_BASE_URL}/classify/photo`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageUrl: s3url }),
+        });
+        if (classRes.ok) {
+          const { category, label } = await classRes.json();
+          if (category && category !== task.categoryId) {
+            finalCat = category;
+            _G.onClassified?.(task.categoryId, category, label);
+          }
+        }
+      } catch (_) {}
+    }
+
+    _G.onResult?.(task.uri, s3url, finalCat);
     if (_G.submittedId === task.requestId) {
       fetch(`${API_BASE_URL}/external/inspection/${task.requestId}/photo`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category: task.categoryId, url: s3url }),
+        body: JSON.stringify({ category: finalCat, url: s3url }),
       }).catch(() => {});
     }
   } catch (_e) {}
@@ -246,10 +270,29 @@ export default function CarEvaluationSheet() {
 
   // ── 업로드 카운트 (전역 싱글톤 연동) ────────────────────────────────────
   const [uploadPending, setUploadPending] = useState(0);
+  const [aiToast, setAiToast] = useState<string | null>(null);
+  const aiToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [poolVisible, setPoolVisible] = useState(20); // 초기 20장만 렌더
+  const [feedbackTarget, setFeedbackTarget] = useState<{ uri: string; catId: string; catIdx: number } | null>(null);
+
+  // 로컬 URI → S3 교체 후 피드백 전송 대기 큐
+  // { localUri, aiCategory, correctCategory }
+  const pendingFeedbacks = useRef<{ localUri: string; aiCategory: string; correctCategory: string }[]>([]);
 
   useEffect(() => {
     // 컴포넌트 마운트: 콜백 등록
     _G.onResult = (uri, s3url, cat) => {
+      // 업로드 완료 시 대기 중인 피드백 있으면 전송
+      const pending = pendingFeedbacks.current.filter(f => f.localUri === uri);
+      pending.forEach(f => {
+        fetch(`${API_BASE_URL}/classify/feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageUrl: s3url, aiCategory: f.aiCategory, correctCategory: f.correctCategory }),
+        }).catch(() => {});
+      });
+      pendingFeedbacks.current = pendingFeedbacks.current.filter(f => f.localUri !== uri);
+
       if (cat === "extra_memo") {
         setExtraPhotos((prev) =>
           prev.map((img) => (img === uri ? s3url : img)),
@@ -262,10 +305,16 @@ export default function CarEvaluationSheet() {
       }
     };
     _G.onCount = (n) => setUploadPending(n);
+    _G.onClassified = (_from, _to, label) => {
+      if (aiToastTimer.current) clearTimeout(aiToastTimer.current);
+      setAiToast(`🤖 ${label}(으)로 자동분류됨`);
+      aiToastTimer.current = setTimeout(() => setAiToast(null), 3000);
+    };
     return () => {
       // 언마운트 후에도 업로드는 계속, UI 콜백만 해제
       _G.onResult = undefined;
       _G.onCount = undefined;
+      _G.onClassified = undefined;
     };
   }, []);
 
@@ -277,6 +326,50 @@ export default function CarEvaluationSheet() {
       requestId: String(requestId || ""),
       carNumber: String(carNumber || "미등록"),
     });
+  };
+
+  // ── 카테고리 수동 수정 (피드백 학습) ────────────────────────────────────────
+  const handleReclassify = async (newCatId: string) => {
+    if (!feedbackTarget) return;
+    const { uri, catId: oldCatId, catIdx } = feedbackTarget;
+    setFeedbackTarget(null);
+    if (newCatId === oldCatId) return;
+
+    // 로컬 상태 이동
+    setImages(prev => {
+      const updated = { ...prev };
+      const photo = updated[oldCatId]?.[catIdx];
+      if (!photo) return prev;
+      updated[oldCatId] = updated[oldCatId].filter((_, i) => i !== catIdx);
+      updated[newCatId] = [...(updated[newCatId] || []), photo];
+      return updated;
+    });
+
+    // 백엔드에 피드백 전송 (학습용)
+    if (uri.startsWith("http")) {
+      // 이미 S3 URL → 즉시 전송
+      fetch(`${API_BASE_URL}/classify/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: uri, aiCategory: oldCatId, correctCategory: newCatId }),
+      }).catch(() => {});
+
+      // 서버 사진 카테고리도 업데이트
+      if (_G.submittedId) {
+        fetch(`${API_BASE_URL}/external/inspection/${_G.submittedId}/photo`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category: newCatId, url: uri }),
+        }).catch(() => {});
+      }
+    } else {
+      // 아직 업로드 중인 로컬 URI → S3 완료 후 전송 대기 큐에 추가
+      pendingFeedbacks.current.push({ localUri: uri, aiCategory: oldCatId, correctCategory: newCatId });
+    }
+
+    setAiToast(`✅ ${CATEGORIES.find(c => c.id === newCatId)?.label ?? newCatId}(으)로 수정됨`);
+    if (aiToastTimer.current) clearTimeout(aiToastTimer.current);
+    aiToastTimer.current = setTimeout(() => setAiToast(null), 2500);
   };
 
   // ── 사이드 미러 심볼 모달 ─────────────────────────────────────────────────
@@ -584,7 +677,7 @@ export default function CarEvaluationSheet() {
       if (!dashboardImage || !regImage || !vinImage) {
         Alert.alert(
           "알림",
-          "기본사진(계기판, 자동차등록증, 차대번호)을 모두 업로드해주세요.",
+          "기본사진(계기판, 자동차등록증, 보험이력)을 모두 업로드해주세요.",
         );
         return;
       }
@@ -1202,6 +1295,70 @@ export default function CarEvaluationSheet() {
           )}
         </View>
 
+        {/* AI 분류 토스트 */}
+        {aiToast && (
+          <View style={{
+            position: 'absolute', top: 60, alignSelf: 'center',
+            backgroundColor: 'rgba(30,30,30,0.85)', paddingHorizontal: 16,
+            paddingVertical: 8, borderRadius: 20, zIndex: 999,
+          }}>
+            <Text style={{ color: '#fff', fontSize: 13 }}>{aiToast}</Text>
+          </View>
+        )}
+
+        {/* 카테고리 수정 모달 (피드백) */}
+        <Modal
+          visible={!!feedbackTarget}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setFeedbackTarget(null)}
+        >
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+            activeOpacity={1}
+            onPress={() => setFeedbackTarget(null)}
+          >
+            <View style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20 }}>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>
+                카테고리 수정
+              </Text>
+              <Text style={{ color: '#666', fontSize: 12, marginBottom: 16 }}>
+                AI 분류가 틀렸나요? 올바른 카테고리를 선택하면 다음부터 더 잘 분류해요 🤖
+              </Text>
+              {CATEGORIES.map((cat) => {
+                const badgeColors: Record<string, string> = {
+                  exterior: '#16a34a', interior: '#2563eb', wheel: '#d97706',
+                  engine: '#dc2626', undercarriage: '#7c3aed', damage: '#be123c', extra: '#475569',
+                };
+                const isCurrentCat = feedbackTarget?.catId === cat.id;
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    onPress={() => handleReclassify(cat.id)}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
+                      paddingHorizontal: 16, borderRadius: 10, marginBottom: 6,
+                      backgroundColor: isCurrentCat ? '#2a2a2a' : 'transparent',
+                    }}
+                  >
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: badgeColors[cat.id], marginRight: 12 }} />
+                    <Text style={{ color: isCurrentCat ? '#888' : '#fff', fontSize: 15, flex: 1 }}>
+                      {cat.label}
+                    </Text>
+                    {isCurrentCat && <Text style={{ color: '#555', fontSize: 12 }}>현재</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                onPress={() => setFeedbackTarget(null)}
+                style={{ marginTop: 8, padding: 14, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#555', fontSize: 14 }}>취소</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
         {/* 사이드 미러 심볼 모달 */}
         <Modal
           visible={mirrorModalVisible}
@@ -1458,7 +1615,7 @@ export default function CarEvaluationSheet() {
               />
               <SingleImageSlot
                 uri={vinImage}
-                label="차대번호"
+                label="보험이력"
                 categoryId="vin"
                 onRemove={() => setVinImage(null)}
               />
@@ -1810,89 +1967,118 @@ export default function CarEvaluationSheet() {
 
             <View style={styles.grayDivider} />
 
-            {/* ═══ 5. 필수 사진 촬영 ══════════════════════════════════════════ */}
+            {/* ═══ 5. 기본 사진 ══════════════════════════════════════════════ */}
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>필수 사진 촬영</Text>
+              <Text style={styles.sectionTitle}>기본 사진</Text>
             </View>
 
             {useMemo(
-              () =>
-                CATEGORIES.map((cat) => (
-                  <View key={cat.id} style={styles.catBox}>
-                    <View style={styles.catHeader}>
-                      <Text style={styles.catTitle}>
-                        {isViewMode ? cat.label : `${cat.label} (최소 ${cat.min}장)`}
+              () => {
+                // 모든 카테고리 사진을 하나로 합쳐서 표시 (AI가 자동 분류)
+                const poolPhotos: { uri: string; catId: string; catIdx: number }[] = [];
+                for (const cat of CATEGORIES) {
+                  (images[cat.id] || []).forEach((uri, idx) => {
+                    poolPhotos.push({ uri, catId: cat.id, catIdx: idx });
+                  });
+                }
+                // 업로드 중(로컬 URI) 사진은 항상 앞에, S3 사진은 페이지네이션
+                const uploading = poolPhotos.filter(p => !p.uri.startsWith("http"));
+                const uploaded  = poolPhotos.filter(p =>  p.uri.startsWith("http"));
+                const visibleUploaded = uploaded.slice(0, Math.max(0, poolVisible - uploading.length));
+                const visible = [...uploading, ...visibleUploaded];
+                const hiddenCount = poolPhotos.length - visible.length;
+                const allUris = poolPhotos.map((p) => p.uri);
+
+                return (
+                  <View style={styles.catBox}>
+                    {!isViewMode && (
+                      <Text style={[styles.catCountText, { marginBottom: 8 }]}>
+                        총 {poolPhotos.length}장 · AI가 자동 분류합니다
                       </Text>
-                      {!isViewMode && (
-                        <Text style={styles.catCountText}>
-                          {images[cat.id]?.length || 0}/30
-                        </Text>
-                      )}
-                    </View>
+                    )}
                     <View style={styles.photoGrid}>
                       {!isViewMode && (
                         <TouchableOpacity
                           style={[styles.photoWrapperGrid, styles.gridAddBtn]}
-                          onPress={() => openCustomPicker(cat.id)}
+                          onPress={() => openCustomPicker("exterior")}
                         >
                           <Ionicons name="camera" size={22} color="#666" />
                           <Text style={styles.gridAddText}>사진추가</Text>
                         </TouchableOpacity>
                       )}
-
-                      {(images[cat.id] || []).map((uri, index) => {
-                        const isUploading = !uri.startsWith("http");
+                      {visible.map((photo) => {
+                        const isUploading = !photo.uri.startsWith("http");
+                        const globalIdx = poolPhotos.findIndex(
+                          p => p.catId === photo.catId && p.catIdx === photo.catIdx
+                        );
+                        const catInfo = CATEGORIES.find(c => c.id === photo.catId);
+                        const badgeColors: Record<string, string> = {
+                          exterior: "#16a34a", interior: "#2563eb", wheel: "#d97706",
+                          engine: "#dc2626", undercarriage: "#7c3aed", damage: "#be123c", extra: "#475569",
+                        };
+                        const badgeColor = badgeColors[photo.catId] ?? "#475569";
                         return (
                           <View
-                            key={`${cat.id}-${index}`}
+                            key={`pool-${photo.catId}-${photo.catIdx}`}
                             style={styles.photoWrapperGrid}
                           >
                             <TouchableOpacity
-                              style={{
-                                width: "100%",
-                                height: "100%",
-                                borderRadius: 8,
-                                overflow: "hidden",
-                              }}
+                              style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden" }}
                               activeOpacity={0.85}
-                              onPress={() => openViewer(images[cat.id], index)}
+                              onPress={() => openViewer(allUris, globalIdx)}
                             >
                               <Image
-                                source={{ uri }}
+                                source={{ uri: photo.uri }}
                                 style={{ width: "100%", height: "100%" }}
                                 resizeMode="cover"
                                 resizeMethod="resize"
+                                fadeDuration={0}
                               />
                               {isUploading && (
                                 <View style={styles.uploadingOverlay}>
-                                  <ActivityIndicator
-                                    size="small"
-                                    color="#fff"
-                                  />
+                                  <ActivityIndicator size="small" color="#fff" />
                                 </View>
                               )}
                             </TouchableOpacity>
+                            {/* 카테고리 배지 - 탭하면 수정 가능 */}
+                            {catInfo && !isUploading && (
+                              <TouchableOpacity
+                                style={[styles.catBadge, { backgroundColor: badgeColor }]}
+                                onPress={() => !isViewMode && setFeedbackTarget(photo)}
+                                activeOpacity={isViewMode ? 1 : 0.7}
+                              >
+                                <Text style={styles.catBadgeText}>{catInfo.label} {!isViewMode ? '✏️' : ''}</Text>
+                              </TouchableOpacity>
+                            )}
                             {!isViewMode && (
                               <TouchableOpacity
                                 style={styles.removeBadgeGrid}
-                                onPress={() => handleDeleteImage(cat.id, index)}
+                                onPress={() => handleDeleteImage(photo.catId, photo.catIdx)}
                               >
-                                <Ionicons
-                                  name="close-circle"
-                                  size={22}
-                                  color="#ff4d4d"
-                                />
+                                <Ionicons name="close-circle" size={22} color="#ff4d4d" />
                               </TouchableOpacity>
                             )}
                           </View>
                         );
                       })}
                     </View>
+                    {hiddenCount > 0 && (
+                      <TouchableOpacity
+                        style={styles.loadMoreBtn}
+                        onPress={() => setPoolVisible(v => v + 20)}
+                      >
+                        <Text style={styles.loadMoreText}>
+                          사진 더 보기 ({hiddenCount}장 남음)
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
-                )),
+                );
+              },
               [
                 images,
                 isViewMode,
+                poolVisible,
                 openCustomPicker,
                 openViewer,
                 handleDeleteImage,
@@ -2423,6 +2609,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   gridAddText: { color: "#666", fontSize: 10, marginTop: 3 },
+  loadMoreBtn: { marginTop: 12, padding: 12, backgroundColor: "#1a1a1a", borderRadius: 8, alignItems: "center" as const },
+  loadMoreText: { color: "#888", fontSize: 13 },
+  catBadge: { position: "absolute" as const, bottom: 4, left: 4, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4 },
+  catBadgeText: { color: "#fff", fontSize: 9, fontWeight: "bold" as const },
   uploadingOverlay: {
     position: "absolute",
     top: 0,
