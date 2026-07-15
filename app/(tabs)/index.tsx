@@ -138,7 +138,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      style={styles.dateStripScroll}
+      style={[styles.dateStripScroll,{height: 72, maxHeight: 72}]}
       contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 6, gap: 6 }}
     >
       <TouchableOpacity
