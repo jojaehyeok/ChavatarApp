@@ -95,6 +95,8 @@ export default function InspectionDetailView() {
             undercarriage: json.images?.undercarriage || [],
             interior: json.images?.interior || [],
             engine: json.images?.engine || [],
+            damage: json.images?.damage || [],
+            extra: json.images?.extra || [],
           },
           inspectionDetails: {
             warningDesc: json.evaluation?.warningDesc,
@@ -131,7 +133,9 @@ export default function InspectionDetailView() {
         wheel: ["https://images.unsplash.com/photo-1551522435-a13afa10f103?q=80&w=400"],
         undercarriage: [],
         interior: ["https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?q=80&w=400"],
-        engine: ["https://images.unsplash.com/photo-1486006920555-c77dcf18193c?q=80&w=400"]
+        engine: ["https://images.unsplash.com/photo-1486006920555-c77dcf18193c?q=80&w=400"],
+        damage: [],
+        extra: []
       },
       inspectionDetails: {
         warningDesc: "없음 (양호)",
@@ -224,6 +228,8 @@ export default function InspectionDetailView() {
         <PhotoGroup title="🔩 하체 점검 (Undercarriage)" images={data.photos?.undercarriage} onPressImage={(idx) => openViewer(data.photos.undercarriage, idx)} />
         <PhotoGroup title="💺 실내 상태 (Interior)" images={data.photos?.interior} onPressImage={(idx) => openViewer(data.photos.interior, idx)} />
         <PhotoGroup title="⚙️ 엔진룸 (Engine)" images={data.photos?.engine} onPressImage={(idx) => openViewer(data.photos.engine, idx)} />
+        <PhotoGroup title="💥 외판 데미지 (Damage)" images={data.photos?.damage} onPressImage={(idx) => openViewer(data.photos.damage, idx)} />
+        <PhotoGroup title="📎 기타 (옵션)" images={data.photos?.extra} onPressImage={(idx) => openViewer(data.photos.extra, idx)} />
 
         <View style={styles.grayDivider} />
 
