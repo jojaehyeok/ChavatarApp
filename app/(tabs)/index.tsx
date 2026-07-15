@@ -125,6 +125,15 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
   const weekEndYmd = toYMD(weekEnd);
   const thisWeekDates = upcomingDates.filter(ymd => ymd >= weekStartYmd && ymd <= weekEndYmd);
 
+  const selectedShadow = {
+    backgroundColor: theme.card,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
+  };
+
   return (
     <ScrollView
       horizontal
@@ -133,10 +142,11 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
       contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 6, gap: 6 }}
     >
       <TouchableOpacity
-        style={[styles.dateChip, { width: 52, backgroundColor: filterDate === 'all' ? theme.textMain : theme.timeSlotBg }]}
+        style={[styles.dateChip, { width: 52 }, filterDate === 'all' && selectedShadow]}
         onPress={() => onSelect('all')}
       >
-        <Text style={[styles.dateChipNum, { color: filterDate === 'all' ? theme.modalBg : theme.textMain }]}>전체</Text>
+        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? theme.accent : theme.textSub, opacity: 0 }]}>·</Text>
+        <Text style={[styles.dateChipNum, { color: filterDate === 'all' ? theme.accent : theme.textMain }]}>전체</Text>
       </TouchableOpacity>
       {thisWeekDates.map(ymd => {
         const d = new Date(ymd);
@@ -145,13 +155,13 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
         return (
           <TouchableOpacity
             key={ymd}
-            style={[styles.dateChip, { width: 52, backgroundColor: isSelected ? theme.textMain : theme.timeSlotBg }]}
+            style={[styles.dateChip, { width: 52 }, isSelected && selectedShadow]}
             onPress={() => onSelect(ymd)}
           >
-            <Text style={[styles.dateChipDay, { color: isSelected ? theme.modalBg : theme.textSub }]}>
+            <Text style={[styles.dateChipDay, { color: isSelected ? theme.accent : theme.textSub }]}>
               {isToday ? '오늘' : DAY_KO[d.getDay()]}
             </Text>
-            <Text style={[styles.dateChipNum, { color: isSelected ? theme.modalBg : theme.textMain }]}>
+            <Text style={[styles.dateChipNum, { color: isSelected ? theme.accent : theme.textMain }]}>
               {d.getDate()}
             </Text>
           </TouchableOpacity>
