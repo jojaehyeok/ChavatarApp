@@ -113,7 +113,17 @@ interface DateFilterStripProps {
 }
 
 function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFilterStripProps) {
-  const todayYmd = toYMD(new Date());
+  const today = new Date();
+  const todayYmd = toYMD(today);
+
+  // 이번 주(일~토)에 해당하는 날짜만 칩으로 표시
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - today.getDay());
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  const weekStartYmd = toYMD(weekStart);
+  const weekEndYmd = toYMD(weekEnd);
+  const thisWeekDates = upcomingDates.filter(ymd => ymd >= weekStartYmd && ymd <= weekEndYmd);
 
   const selectedShadow = {
     backgroundColor: theme.card,
@@ -137,7 +147,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
       >
         <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? theme.accent : theme.textSub }]}>전체</Text>
       </TouchableOpacity>
-      {upcomingDates.map(ymd => {
+      {thisWeekDates.map(ymd => {
         const d = new Date(ymd);
         const isSelected = filterDate === ymd;
         const isToday = ymd === todayYmd;
@@ -782,7 +792,7 @@ const styles = StyleSheet.create({
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
   tabText: { fontSize: 15, fontWeight: 'bold' },
 
-  dateStripScroll: { maxHeight: 56, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
+  dateStripScroll: { maxHeight: 56 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
   dateChip: { height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: 'transparent' },
   dateChipDay: { fontSize: 9, fontWeight: '500' },

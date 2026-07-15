@@ -479,8 +479,11 @@ export default function CarEvaluationSheet() {
         undercarriage: imgs.undercarriage ?? [],
         interior: imgs.interior ?? [],
         engine: imgs.engine ?? [],
+        damage: imgs.damage ?? [],
+        extra: imgs.extra ?? [],
         paperSheet: [],
       });
+      setExtraPhotos(imgs.extraMemo ?? []);
 
       // 손상 체크 & 미러
       const count = isInspection ? 35 : 37;
