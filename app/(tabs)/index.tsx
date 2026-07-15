@@ -138,30 +138,77 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      style={[styles.dateStripScroll,{height: 72, maxHeight: 72}]}
-      contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 6, gap: 6 }}
+      style={[
+        styles.dateStripScroll,
+        {
+          height: 72,
+          minHeight: 72,
+          maxHeight: 72,
+        },
+      ]}
+      contentContainerStyle={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 6,
+        gap: 6,
+        height: 72,
+      }}
     >
       <TouchableOpacity
-        style={[styles.dateChip, { width: 52 }, filterDate === 'all' && selectedShadow]}
+        style={[
+          styles.dateChip,
+          styles.dateChipFixed,
+          filterDate === 'all' && selectedShadow,
+        ]}
         onPress={() => onSelect('all')}
       >
-        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? theme.accent : theme.textSub, opacity: 0 }]}>·</Text>
-        <Text style={[styles.dateChipNum, { color: filterDate === 'all' ? theme.accent : theme.textMain }]}>전체</Text>
+        <Text
+          style={[
+            styles.dateChipAllText,
+            {
+              color: filterDate === 'all' ? theme.accent : theme.textMain,
+            },
+          ]}
+        >
+          전체
+        </Text>
       </TouchableOpacity>
+
       {thisWeekDates.map(ymd => {
         const d = new Date(ymd);
         const isSelected = filterDate === ymd;
         const isToday = ymd === todayYmd;
+
         return (
           <TouchableOpacity
             key={ymd}
-            style={[styles.dateChip, { width: 52 }, isSelected && selectedShadow]}
+            style={[
+              styles.dateChip,
+              styles.dateChipFixed,
+              isSelected && selectedShadow,
+            ]}
             onPress={() => onSelect(ymd)}
           >
-            <Text style={[styles.dateChipDay, { color: isSelected ? theme.accent : theme.textSub }]}>
+            <Text
+              style={[
+                styles.dateChipDay,
+                {
+                  color: isSelected ? theme.accent : theme.textSub,
+                },
+              ]}
+            >
               {isToday ? '오늘' : DAY_KO[d.getDay()]}
             </Text>
-            <Text style={[styles.dateChipNum, { color: isSelected ? theme.accent : theme.textMain }]}>
+
+            <Text
+              style={[
+                styles.dateChipNum,
+                {
+                  color: isSelected ? theme.accent : theme.textMain,
+                },
+              ]}
+            >
               {d.getDate()}
             </Text>
           </TouchableOpacity>
@@ -793,11 +840,13 @@ const styles = StyleSheet.create({
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
   tabText: { fontSize: 15, fontWeight: 'bold' },
 
-  dateStripScroll: { maxHeight: 56 },
+  dateStripScroll: { backgroundColor: '#f2f3f5', height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
-  dateChip: { height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: 'transparent' },
-  dateChipDay: { fontSize: 9, fontWeight: '500' },
-  dateChipNum: { fontSize: 12, fontWeight: 'bold' },
+  dateChip: { backgroundColor: '#fff', borderRadius: 12, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  dateChipFixed: { width: 52, height: 56, minHeight: 56, maxHeight: 56 },
+  dateChipAllText: { fontSize: 14, fontWeight: '700', lineHeight: 18, includeFontPadding: false, textAlign: 'center' },
+  dateChipDay: { fontSize: 12, fontWeight: '600', lineHeight: 16, includeFontPadding: false, textAlign: 'center' },
+  dateChipNum: { fontSize: 15, fontWeight: '700', lineHeight: 18, marginTop: 2, includeFontPadding: false, textAlign: 'center' },
   dateChipDot: { width: 3, height: 3, borderRadius: 2, marginTop: 1 },
 
   card: { padding: 20, borderBottomWidth: 1 },
