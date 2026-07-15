@@ -127,8 +127,6 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
 
   const selectedShadow = {
     backgroundColor: theme.card,
-    borderWidth: 1.5,
-    borderColor: theme.accent,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.18,
