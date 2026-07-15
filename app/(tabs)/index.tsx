@@ -1,19 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLocationTracking } from '@/hooks/useLocationTracking';
 import axios from 'axios';
 import Constants from 'expo-constants';
-import { useRouter } from 'expo-router';
-
-// Expo Go에서는 push 알림 미지원 (SDK 53+)
-// ⚠️ static import 금지: expo-notifications 로드 시점에 사이드이펙트로 크래시 발생
-// IS_EXPO_GO 판별 후 조건부 require 로 로드해야 함
-const IS_EXPO_GO = Constants.appOwnership === 'expo';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const Notifications = IS_EXPO_GO ? null : (require('expo-notifications') as typeof import('expo-notifications'));
-import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Dimensions,
   FlatList,
   Linking,
@@ -30,10 +25,15 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { API_BASE_URL } from '../../constants/api';
 
-const API_BASE_URL = 'https://carvior.store/api/v1';
+const IS_EXPO_GO = Constants.appOwnership === 'expo';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+let Notifications: typeof import('expo-notifications') | null = null;
+try {
+  Notifications = require('expo-notifications') as typeof import('expo-notifications');
+} catch (_) {}
 
-// 앱이 포그라운드 상태에서도 알림 배너 표시 (Expo Go 제외)
 if (!IS_EXPO_GO) {
   Notifications?.setNotificationHandler({
     handleNotification: async () => ({
@@ -44,14 +44,14 @@ if (!IS_EXPO_GO) {
     }),
   });
 }
-const { width: SCREEN_W } = Dimensions.get('window');
 
-// ── 시간 슬롯 ─────────────────────────────────────────────────────────────────
+const { width: SCREEN_W } = Dimensions.get('window');
+const DRAWER_W = SCREEN_W * 0.72;
+
 const AM_TIMES = ['08:00', '09:00', '10:00', '11:00'];
 const PM_TIMES = ['12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
 const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
-// ── 유틸 ──────────────────────────────────────────────────────────────────────
 const toYMD = (d: Date) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -60,14 +60,12 @@ const toYMD = (d: Date) => {
 };
 
 const getDateStrip = (count = 30) => {
-  const result: Date[] = [];
   const today = new Date();
-  for (let i = 0; i < count; i++) {
+  return Array.from({ length: count }, (_, i) => {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
-    result.push(d);
-  }
-  return result;
+    return d;
+  });
 };
 
 const formatKoreanDate = (ymd: string) => {
@@ -95,13 +93,90 @@ interface DiagnosisItem {
   completedAt?: string;
 }
 
+interface Theme {
+  background: string;
+  card: string;
+  textMain: string;
+  textSub: string;
+  border: string;
+  accent: string;
+  tabBar: string;
+  buttonSub: string;
+  modalBg: string;
+  timeSlotBg: string;
+}
+
+interface DateFilterStripProps {
+  filterDate: string;
+  upcomingDates: string[];
+  onSelect: (date: string) => void;
+  theme: Theme;
+}
+
+function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFilterStripProps) {
+  const strip = getDateStrip(30);
+  const todayYmd = toYMD(new Date());
+  const chipCount = 1 + upcomingDates.length;
+  const GAP = 8;
+  const PADDING = 24;
+  const MIN_W = 56;
+  const chipW = Math.floor((SCREEN_W - PADDING - GAP * (chipCount - 1)) / chipCount);
+  const fitsInScreen = chipW >= MIN_W;
+  const finalChipW = fitsInScreen ? chipW : MIN_W;
+
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.dateStripScroll}
+      contentContainerStyle={[styles.dateStripContent, fitsInScreen && { width: SCREEN_W }]}
+      scrollEnabled={!fitsInScreen}
+    >
+      <TouchableOpacity
+        style={[styles.dateChip, { width: finalChipW }, filterDate === 'all' && { backgroundColor: theme.accent }]}
+        onPress={() => onSelect('all')}
+      >
+        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? '#fff' : theme.textSub }]}>전체</Text>
+      </TouchableOpacity>
+      {strip.map(d => {
+        const ymd = toYMD(d);
+        if (!upcomingDates.includes(ymd)) return null;
+        const isSelected = filterDate === ymd;
+        const isToday = ymd === todayYmd;
+        return (
+          <TouchableOpacity
+            key={ymd}
+            style={[styles.dateChip, { width: finalChipW }, isSelected && { backgroundColor: theme.accent }]}
+            onPress={() => onSelect(ymd)}
+          >
+            <Text style={[styles.dateChipDay, { color: isSelected ? '#fff' : theme.textSub }]}>
+              {isToday ? '오늘' : DAY_KO[d.getDay()]}
+            </Text>
+            <Text style={[styles.dateChipNum, { color: isSelected ? '#fff' : theme.textMain }]}>
+              {d.getDate()}
+            </Text>
+            {!isSelected && <View style={[styles.dateChipDot, { backgroundColor: theme.accent }]} />}
+          </TouchableOpacity>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+const CANCEL_REASONS = [
+  { id: '진단사 사정', label: '진단사 사정' },
+  { id: '판매자의 예약 취소', label: '판매자의 예약 취소' },
+  { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
+];
+
 export default function DiagnosisManagement() {
   const systemTheme = useColorScheme();
   const isDark = systemTheme === 'dark';
   const router = useRouter();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
-  const theme = {
+  const theme: Theme = {
     background: isDark ? '#111' : '#f8f9fa',
     card: isDark ? '#1a1a1a' : '#fff',
     textMain: isDark ? '#fff' : '#000',
@@ -115,11 +190,24 @@ export default function DiagnosisManagement() {
   };
 
   const [activeTab, setActiveTab] = useState<'upcoming' | 'request' | 'completed'>('upcoming');
+  const [menuVisible, setMenuVisible] = useState(false);
+  const drawerAnim = useRef(new Animated.Value(DRAWER_W)).current;
+
+  // GPS 위치 추적 (로그인 후 자동 시작, 30초 주기)
+  const { status: gpsStatus } = useLocationTracking();
+
+  const openDrawer = useCallback(() => {
+    setMenuVisible(true);
+    Animated.timing(drawerAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start();
+  }, [drawerAnim]);
+
+  const closeDrawer = useCallback(() => {
+    Animated.timing(drawerAnim, { toValue: DRAWER_W, duration: 220, useNativeDriver: true }).start(() => setMenuVisible(false));
+  }, [drawerAnim]);
+
   const [data, setData] = useState<DiagnosisItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
-  // 완료된 예약 별점 캐시: { [bookingId]: rating }
   const [ratingMap, setRatingMap] = useState<Record<string, number>>({});
 
   const [isNavModalVisible, setNavModalVisible] = useState(false);
@@ -129,16 +217,13 @@ export default function DiagnosisManagement() {
   const [currentDriverId, setCurrentDriverId] = useState<string | null>(null);
   const [currentDriverName, setCurrentDriverName] = useState<string | null>(null);
 
-  // 날짜 필터 (다가오는 예약탭)
   const [filterDate, setFilterDate] = useState<string>('all');
 
-  // 시간 변경 모달
   const [timeChangeItem, setTimeChangeItem] = useState<DiagnosisItem | null>(null);
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [timeChanging, setTimeChanging] = useState(false);
 
-  // 더 보기 / 예약 취소 모달
   const [moreOptionsItem, setMoreOptionsItem] = useState<DiagnosisItem | null>(null);
   const [cancelItem, setCancelItem] = useState<DiagnosisItem | null>(null);
   const [cancelReason, setCancelReason] = useState('');
@@ -146,11 +231,15 @@ export default function DiagnosisManagement() {
 
   const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
 
-const CANCEL_REASONS = [
-  { id: '진단사 사정', label: '진단사 사정' },
-  { id: '판매자의 예약 취소', label: '판매자의 예약 취소' },
-  { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
-];
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={openDrawer} style={{ paddingHorizontal: 12, paddingVertical: 6 }}>
+          <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, openDrawer]);
 
   useEffect(() => {
     const getMyInfo = async () => {
@@ -162,15 +251,11 @@ const CANCEL_REASONS = [
     getMyInfo();
   }, []);
 
-  // ── 푸시 알림 토큰 등록 (빌드앱 전용, Expo Go 제외) ────────────────────
   useEffect(() => {
-    if (IS_EXPO_GO) return; // Expo Go에서는 동작 안 함
+    if (!Notifications || !currentDriverId) return;
 
     const registerPushToken = async () => {
       try {
-        const driverId = await AsyncStorage.getItem('driverId');
-        if (!driverId) return;
-
         const { status: existing } = await Notifications!.getPermissionsAsync();
         let finalStatus = existing;
         if (existing !== 'granted') {
@@ -180,29 +265,22 @@ const CANCEL_REASONS = [
         if (finalStatus !== 'granted') return;
 
         const tokenData = await Notifications!.getDevicePushTokenAsync();
-        const pushToken = tokenData.data;
-
-        await axios.patch(`${API_BASE_URL}/drivers/${driverId}/push-token`, { pushToken })
-          .catch(() => {});
-      } catch (_e) {
-        // 알림 미지원 환경에서 조용히 무시
+        await axios.patch(`${API_BASE_URL}/drivers/${currentDriverId}/push-token`, { pushToken: tokenData.data });
+      } catch (e) {
+        console.error('[FCM] 토큰 등록 실패:', e);
       }
     };
 
     registerPushToken();
 
-    let sub: { remove: () => void } | null | undefined = null;
+    let sub: { remove: () => void } | null = null;
     try {
-      // 알림 탭 시 다가오는 예약 탭으로 이동
-      sub = Notifications?.addNotificationResponseReceivedListener(() => {
-        setActiveTab('upcoming');
-      });
+      sub = Notifications?.addNotificationResponseReceivedListener(() => setActiveTab('upcoming')) ?? null;
     } catch (_e) {}
 
     return () => { try { sub?.remove(); } catch (_e) {} };
-  }, []);
+  }, [currentDriverId]);
 
-  // 다가오는 예약에서 예약 있는 날짜 목록
   const upcomingDates = useMemo(() => {
     if (activeTab !== 'upcoming') return [];
     const dates = data
@@ -211,7 +289,6 @@ const CANCEL_REASONS = [
     return [...new Set(dates)].sort();
   }, [data, activeTab]);
 
-  // 날짜 필터 적용
   const filteredData = useMemo(() => {
     if (activeTab !== 'upcoming' || filterDate === 'all') return data;
     return data.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
@@ -233,19 +310,23 @@ const CANCEL_REASONS = [
   const handleLaunchMap = async (app: 'kakao' | 'naver' | 'tmap') => {
     if (!selectedItem) return;
     const encoded = encodeURIComponent(selectedItem.address);
-    let url = app === 'kakao' ? `kakaomap://search?q=${encoded}` : app === 'naver' ? `nmap://search?query=${encoded}` : `tmap://search?name=${encoded}`;
+    const url = app === 'kakao'
+      ? `kakaomap://search?q=${encoded}`
+      : app === 'naver'
+        ? `nmap://search?query=${encoded}`
+        : `tmap://search?name=${encoded}`;
     setNavModalVisible(false);
     try { await Linking.openURL(url); } catch { Alert.alert('앱 미설치', '해당 지도 앱이 설치되어 있지 않습니다.'); }
   };
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!currentDriverId) return;
     setLoading(true);
     try {
       const response = await axios.get(`${API_BASE_URL}/external/request/list`);
-      const allData = Array.isArray(response.data) ? response.data : response.data.data;
+      const allData: DiagnosisItem[] = Array.isArray(response.data) ? response.data : response.data.data;
       if (!allData) return;
-      const filtered = allData.filter((item: any) => {
+      const filtered = allData.filter(item => {
         const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
         if (activeTab === 'request') return item.status === 'PENDING';
         if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
@@ -254,9 +335,8 @@ const CANCEL_REASONS = [
       setData(filtered);
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
-  };
+  }, [activeTab, currentDriverId, currentDriverName]);
 
-  // 시간 변경 모달 열기 (기존 날짜/시간 파싱)
   const openTimeChange = (item: DiagnosisItem) => {
     setTimeChangeItem(item);
     const dt = item.preferredDateTime || '';
@@ -313,9 +393,18 @@ const CANCEL_REASONS = [
     finally { setCancelling(false); }
   };
 
-  useEffect(() => { fetchData(); }, [activeTab, currentDriverId]);
+  const handleOpenKakaoMap = useCallback(() => {
+    if (filteredData.length === 0) return;
+    const items = filteredData.map(item => ({
+      address: item.address,
+      title: `${item.carModel || ''} ${item.carNumber}`.trim() || '예약',
+      dateTime: item.preferredDateTime || '',
+    }));
+    router.push({ pathname: '/KakaoMapScreen', params: { items: JSON.stringify(items) } } as any);
+  }, [filteredData, router]);
 
-  // 완료 탭 진입 시 오늘 리뷰 평점 조회
+  useEffect(() => { fetchData(); }, [fetchData]);
+
   useEffect(() => {
     if (activeTab !== 'completed' || !currentDriverId) return;
     axios.get(`${API_BASE_URL}/reviews/driver/${currentDriverId}/today`)
@@ -327,58 +416,6 @@ const CANCEL_REASONS = [
       })
       .catch(() => {});
   }, [activeTab, currentDriverId]);
-
-  // ── 날짜 스트립 (다가오는 예약 필터용) ──────────────────────────────────────
-  const DateFilterStrip = () => {
-    const strip = getDateStrip(30);
-    const todayYmd = toYMD(new Date());
-    const chipCount = 1 + upcomingDates.length;
-    const GAP = 8;
-    const PADDING = 24;
-    const MIN_W = 56;
-    const chipW = Math.floor((SCREEN_W - PADDING - GAP * (chipCount - 1)) / chipCount);
-    const fitsInScreen = chipW >= MIN_W;
-    const finalChipW = fitsInScreen ? chipW : MIN_W;
-
-    return (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.dateStripScroll}
-        contentContainerStyle={[styles.dateStripContent, fitsInScreen && { width: SCREEN_W }]}
-        scrollEnabled={!fitsInScreen}
-      >
-        <TouchableOpacity
-          style={[styles.dateChip, { width: finalChipW }, filterDate === 'all' && { backgroundColor: theme.accent }]}
-          onPress={() => setFilterDate('all')}
-        >
-          <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? '#fff' : theme.textSub }]}>전체</Text>
-        </TouchableOpacity>
-        {strip.map(d => {
-          const ymd = toYMD(d);
-          const hasItems = upcomingDates.includes(ymd);
-          if (!hasItems) return null;
-          const isSelected = filterDate === ymd;
-          const isToday = ymd === todayYmd;
-          return (
-            <TouchableOpacity
-              key={ymd}
-              style={[styles.dateChip, { width: finalChipW }, isSelected && { backgroundColor: theme.accent }]}
-              onPress={() => setFilterDate(ymd)}
-            >
-              <Text style={[styles.dateChipDay, { color: isSelected ? '#fff' : theme.textSub }]}>
-                {isToday ? '오늘' : DAY_KO[d.getDay()]}
-              </Text>
-              <Text style={[styles.dateChipNum, { color: isSelected ? '#fff' : theme.textMain }]}>
-                {d.getDate()}
-              </Text>
-              {hasItems && !isSelected && <View style={[styles.dateChipDot, { backgroundColor: theme.accent }]} />}
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    );
-  };
 
   const renderButtons = (item: DiagnosisItem) => {
     if (activeTab === 'request') {
@@ -407,9 +444,7 @@ const CANCEL_REASONS = [
       );
     }
     const completedTime = item.completedAt || item.updatedAt;
-    const canEdit = completedTime
-      ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000
-      : false;
+    const canEdit = completedTime ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000 : false;
     const itemRating = ratingMap[String(item.id)];
     return (
       <View style={{ gap: 8 }}>
@@ -435,6 +470,7 @@ const CANCEL_REASONS = [
             </TouchableOpacity>
           )}
         </View>
+
       </View>
     );
   };
@@ -444,10 +480,38 @@ const CANCEL_REASONS = [
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <View style={[styles.container, { backgroundColor: theme.background }]}>
 
-        {/* 탭바 */}
+        <Modal visible={menuVisible} transparent animationType="none" onRequestClose={closeDrawer}>
+          <Pressable style={styles.drawerOverlay} onPress={closeDrawer}>
+            <Animated.View style={[styles.drawer, { backgroundColor: theme.card, transform: [{ translateX: drawerAnim }] }]}>
+              <Pressable>
+                <View style={[styles.drawerHeader, { borderBottomColor: theme.border }]}>
+                  <Text style={[styles.drawerTitle, { color: theme.textMain }]}>더보기</Text>
+                  <TouchableOpacity onPress={closeDrawer} style={{ padding: 4 }}>
+                    <Ionicons name="close" size={22} color={theme.textSub} />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={[styles.drawerItem, { borderBottomColor: theme.border }]}
+                  onPress={() => { closeDrawer(); setTimeout(() => router.push('/PaintMeterScreen' as any), 250); }}
+                >
+                  <View style={[styles.drawerItemIcon, { backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
+                    <Ionicons name="color-palette-outline" size={20} color={theme.accent} />
+                  </View>
+                  <Text style={[styles.drawerItemText, { color: theme.textMain }]}>도막측정</Text>
+                  <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+                </TouchableOpacity>
+              </Pressable>
+            </Animated.View>
+          </Pressable>
+        </Modal>
+
         <View style={[styles.tabBar, { backgroundColor: theme.tabBar, borderBottomColor: theme.border }]}>
           {(['upcoming', 'request', 'completed'] as const).map((tab) => (
-            <TouchableOpacity key={tab} onPress={() => { setActiveTab(tab); setFilterDate('all'); }} style={[styles.tabItem, activeTab === tab && { borderBottomColor: isDark ? theme.accent : '#000', borderBottomWidth: 2 }]}>
+            <TouchableOpacity
+              key={tab}
+              onPress={() => { setActiveTab(tab); setFilterDate('all'); }}
+              style={[styles.tabItem, activeTab === tab && { borderBottomColor: isDark ? theme.accent : '#000', borderBottomWidth: 2 }]}
+            >
               <Text style={[styles.tabText, { color: activeTab === tab ? theme.textMain : theme.textSub }]}>
                 {tab === 'upcoming' ? '다가오는 예약' : tab === 'request' ? '예약 요청' : '완료된 예약'}
               </Text>
@@ -455,8 +519,14 @@ const CANCEL_REASONS = [
           ))}
         </View>
 
-        {/* 다가오는 예약 날짜 필터 스트립 */}
-        {activeTab === 'upcoming' && upcomingDates.length > 0 && <DateFilterStrip />}
+        {activeTab === 'upcoming' && upcomingDates.length > 0 && (
+          <DateFilterStrip
+            filterDate={filterDate}
+            upcomingDates={upcomingDates}
+            onSelect={setFilterDate}
+            theme={theme}
+          />
+        )}
 
         <FlatList
           data={filteredData}
@@ -490,10 +560,8 @@ const CANCEL_REASONS = [
           ) : null}
         />
 
-        {/* ── 시간 변경 모달 (풀스크린) ───────────────────────────────────── */}
         <Modal visible={!!timeChangeItem} animationType="slide" transparent={false}>
           <SafeAreaView style={[styles.timeModalSafe, { backgroundColor: theme.modalBg }]}>
-            {/* 헤더 */}
             <View style={styles.timeModalHeader}>
               <TouchableOpacity onPress={() => setTimeChangeItem(null)} style={styles.timeModalClose}>
                 <Ionicons name="close" size={26} color={theme.textMain} />
@@ -501,9 +569,7 @@ const CANCEL_REASONS = [
               <Text style={[styles.timeModalTitle, { color: theme.textMain }]}>예약 시간 변경</Text>
               <View style={{ width: 40 }} />
             </View>
-
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-              {/* 선택된 날짜 표시 */}
               <View style={styles.timeModalDateHeader}>
                 <Text style={[styles.timeModalDateText, { color: theme.textMain }]}>
                   {selectedDate ? formatKoreanDate(selectedDate) : '날짜를 선택해 주세요.'}
@@ -512,8 +578,6 @@ const CANCEL_REASONS = [
                   {selectedDate ? '시간을 선택해 주세요.' : ''}
                 </Text>
               </View>
-
-              {/* 날짜 가로 스트립 */}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeDateScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
                 {getDateStrip(30).map(d => {
                   const ymd = toYMD(d);
@@ -535,10 +599,7 @@ const CANCEL_REASONS = [
                   );
                 })}
               </ScrollView>
-
               <View style={[styles.timeDivider, { backgroundColor: theme.border }]} />
-
-              {/* 오전 */}
               <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오전</Text>
               <View style={styles.timeGrid}>
                 {AM_TIMES.map(t => (
@@ -551,8 +612,6 @@ const CANCEL_REASONS = [
                   </TouchableOpacity>
                 ))}
               </View>
-
-              {/* 오후 */}
               <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오후</Text>
               <View style={styles.timeGrid}>
                 {PM_TIMES.map(t => (
@@ -565,11 +624,8 @@ const CANCEL_REASONS = [
                   </TouchableOpacity>
                 ))}
               </View>
-
               <View style={{ height: 120 }} />
             </ScrollView>
-
-            {/* 하단 변경하기 버튼 */}
             <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
               <TouchableOpacity
                 style={[styles.timeConfirmBtn, { backgroundColor: newDateTime ? theme.accent : (isDark ? '#333' : '#ddd') }]}
@@ -585,7 +641,6 @@ const CANCEL_REASONS = [
           </SafeAreaView>
         </Modal>
 
-        {/* ── 연락 / 길찾기 모달 ──────────────────────────────────────────── */}
         <Modal visible={isContactModalVisible || isNavModalVisible} transparent animationType="slide">
           <Pressable style={styles.modalOverlay} onPress={() => { setContactModalVisible(false); setNavModalVisible(false); }}>
             <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
@@ -607,7 +662,6 @@ const CANCEL_REASONS = [
           </Pressable>
         </Modal>
 
-        {/* ── 더 보기 바텀 시트 ───────────────────────────────────────────── */}
         <Modal visible={!!moreOptionsItem} transparent animationType="slide">
           <Pressable style={styles.modalOverlay} onPress={() => setMoreOptionsItem(null)}>
             <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
@@ -639,7 +693,6 @@ const CANCEL_REASONS = [
           </Pressable>
         </Modal>
 
-        {/* ── 예약 취소 사유 모달 (풀스크린) ─────────────────────────────── */}
         <Modal visible={!!cancelItem} animationType="slide" transparent={false}>
           <SafeAreaView style={[styles.timeModalSafe, { backgroundColor: theme.modalBg }]}>
             <View style={styles.timeModalHeader}>
@@ -648,13 +701,10 @@ const CANCEL_REASONS = [
               </TouchableOpacity>
               <View style={{ width: 40 }} />
             </View>
-
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               <Text style={[styles.timeModalTitle, { color: theme.textMain, paddingHorizontal: 20, paddingTop: 4, paddingBottom: 20, fontSize: 22 }]}>
                 예약 취소 사유를{'\n'}선택해 주세요
               </Text>
-
-              {/* 예약 정보 */}
               <View style={styles.cancelInfoBox}>
                 {[
                   { label: '차종', value: cancelItem?.carModel || '-' },
@@ -668,10 +718,7 @@ const CANCEL_REASONS = [
                   </View>
                 ))}
               </View>
-
               <View style={[styles.cancelDivider, { backgroundColor: theme.border }]} />
-
-              {/* 취소 사유 선택 */}
               {CANCEL_REASONS.map(reason => {
                 const selected = cancelReason === reason.id;
                 return (
@@ -688,7 +735,6 @@ const CANCEL_REASONS = [
               })}
               <View style={{ height: 120 }} />
             </ScrollView>
-
             <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
               <TouchableOpacity
                 style={[styles.timeConfirmBtn, { backgroundColor: cancelReason ? '#e53e3e' : (isDark ? '#333' : '#ddd') }]}
@@ -704,6 +750,22 @@ const CANCEL_REASONS = [
           </SafeAreaView>
         </Modal>
 
+
+        {activeTab === 'upcoming' && filteredData.length > 0 && (
+          <View style={styles.fabContainer} pointerEvents="box-none">
+            <TouchableOpacity
+              style={styles.mapFab}
+              onPress={handleOpenKakaoMap}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="map" size={22} color="#fff" />
+              <Text style={styles.mapFabText}>
+                {`지도 보기 (${filteredData.length}곳)`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
       </View>
     </SafeAreaView>
   );
@@ -713,20 +775,17 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   container: { flex: 1 },
 
-  // 탭바
   tabBar: { flexDirection: 'row', borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
   tabText: { fontSize: 15, fontWeight: 'bold' },
 
-  // 날짜 필터 스트립 (다가오는 예약)
-  dateStripScroll: { maxHeight: 80, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
-  dateStripContent: { paddingHorizontal: 12, paddingVertical: 10, gap: 8, alignItems: 'stretch' },
-  dateChip: { height: 60, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: 'transparent' },
-  dateChipDay: { fontSize: 11, fontWeight: '600' },
-  dateChipNum: { fontSize: 17, fontWeight: 'bold' },
-  dateChipDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
+  dateStripScroll: { maxHeight: 56, borderBottomWidth: 1, borderBottomColor: '#1a1a1a' },
+  dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
+  dateChip: { height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: 'transparent' },
+  dateChipDay: { fontSize: 9, fontWeight: '500' },
+  dateChipNum: { fontSize: 12, fontWeight: 'bold' },
+  dateChipDot: { width: 3, height: 3, borderRadius: 2, marginTop: 1 },
 
-  // 카드
   card: { padding: 20, borderBottomWidth: 1 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
   cardTitle: { fontSize: 18, fontWeight: 'bold' },
@@ -736,18 +795,15 @@ const styles = StyleSheet.create({
   label: { color: '#888', width: 70, fontSize: 14 },
   value: { flex: 1, fontSize: 14 },
 
-  // 버튼
   btnGroup: { flexDirection: 'row', gap: 8 },
   subCardBtn: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center' },
   mainBtn: { padding: 15, borderRadius: 8, alignItems: 'center' },
   subBtn: { padding: 12, borderRadius: 8, alignItems: 'center' },
   subBtnText: { fontWeight: 'bold' },
 
-  // 빈 목록
   emptyWrap: { alignItems: 'center', paddingTop: 60 },
   emptyText: { fontSize: 15 },
 
-  // 시간 변경 모달
   timeModalSafe: { flex: 1 },
   timeModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14 },
   timeModalClose: { padding: 4 },
@@ -768,7 +824,6 @@ const styles = StyleSheet.create({
   timeConfirmBtn: { height: 54, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   timeConfirmText: { fontSize: 17, fontWeight: 'bold' },
 
-  // 연락/길찾기 모달
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 50 },
   modalHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
@@ -779,13 +834,9 @@ const styles = StyleSheet.create({
   mapItem: { alignItems: 'center' },
   mapIcon: { width: 50, height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
 
-  // 더 보기 버튼
-  moreBtn: { width: 46, height: 46, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-
-  // 별점 뱃지
+  moreBtnCard: { width: 46, height: 46, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   ratingBadge: { flexDirection: 'row', alignItems: 'center', padding: 8, borderRadius: 8 },
 
-  // 취소 사유 모달
   cancelInfoBox: { backgroundColor: 'transparent', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, gap: 6 },
   cancelInfoRow: { flexDirection: 'row', marginBottom: 4 },
   cancelInfoLabel: { color: '#888', width: 70, fontSize: 14 },
@@ -796,4 +847,23 @@ const styles = StyleSheet.create({
   cancelOptionNote: { fontSize: 13, marginTop: 3 },
   cancelRadio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
   cancelRadioInner: { width: 10, height: 10, borderRadius: 5 },
+
+  moreBtn: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
+  drawerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', flexDirection: 'row', justifyContent: 'flex-end' },
+  drawer: { width: DRAWER_W, height: '100%', shadowColor: '#000', shadowOpacity: 0.3, shadowOffset: { width: -3, height: 0 }, shadowRadius: 10, elevation: 20 },
+  drawerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1 },
+  drawerTitle: { fontSize: 17, fontWeight: '700' },
+  drawerItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, gap: 14 },
+  drawerItemIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  drawerItemText: { flex: 1, fontSize: 15, fontWeight: '500' },
+  menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },
+  menuItemText: { fontSize: 15, fontWeight: '500' },
+
+  fabContainer: { position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center' },
+  mapFab: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#63489a', paddingHorizontal: 22, paddingVertical: 14, borderRadius: 30,
+    shadowColor: '#63489a', shadowOpacity: 0.4, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 8,
+  },
+  mapFabText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });
