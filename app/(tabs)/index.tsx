@@ -145,7 +145,8 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
         style={[styles.dateChip, { width: 52 }, filterDate === 'all' && selectedShadow]}
         onPress={() => onSelect('all')}
       >
-        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? theme.accent : theme.textSub }]}>전체</Text>
+        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? theme.accent : theme.textSub, opacity: 0 }]}>·</Text>
+        <Text style={[styles.dateChipNum, { color: filterDate === 'all' ? theme.accent : theme.textMain }]}>전체</Text>
       </TouchableOpacity>
       {thisWeekDates.map(ymd => {
         const d = new Date(ymd);
