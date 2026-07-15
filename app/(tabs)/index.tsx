@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useLocationTracking } from '@/hooks/useLocationTracking';
 import axios from 'axios';
 import Constants from 'expo-constants';
 import { useNavigation, useRouter } from 'expo-router';
@@ -116,24 +115,11 @@ interface DateFilterStripProps {
 function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFilterStripProps) {
   const strip = getDateStrip(30);
   const todayYmd = toYMD(new Date());
-  const chipCount = 1 + upcomingDates.length;
-  const GAP = 8;
-  const PADDING = 24;
-  const MIN_W = 56;
-  const chipW = Math.floor((SCREEN_W - PADDING - GAP * (chipCount - 1)) / chipCount);
-  const fitsInScreen = chipW >= MIN_W;
-  const finalChipW = fitsInScreen ? chipW : MIN_W;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.dateStripScroll}
-      contentContainerStyle={[styles.dateStripContent, fitsInScreen && { width: SCREEN_W }]}
-      scrollEnabled={!fitsInScreen}
-    >
+    <View style={[styles.dateStripScroll, { flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 6 }]}>
       <TouchableOpacity
-        style={[styles.dateChip, { width: finalChipW }, filterDate === 'all' && { backgroundColor: theme.accent }]}
+        style={[styles.dateChip, { flex: 1 }, filterDate === 'all' && { backgroundColor: theme.accent }]}
         onPress={() => onSelect('all')}
       >
         <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? '#fff' : theme.textSub }]}>전체</Text>
@@ -146,7 +132,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
         return (
           <TouchableOpacity
             key={ymd}
-            style={[styles.dateChip, { width: finalChipW }, isSelected && { backgroundColor: theme.accent }]}
+            style={[styles.dateChip, { flex: 1 }, isSelected && { backgroundColor: theme.accent }]}
             onPress={() => onSelect(ymd)}
           >
             <Text style={[styles.dateChipDay, { color: isSelected ? '#fff' : theme.textSub }]}>
@@ -159,7 +145,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
           </TouchableOpacity>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -192,9 +178,6 @@ export default function DiagnosisManagement() {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'request' | 'completed'>('upcoming');
   const [menuVisible, setMenuVisible] = useState(false);
   const drawerAnim = useRef(new Animated.Value(DRAWER_W)).current;
-
-  // GPS 위치 추적 (로그인 후 자동 시작, 30초 주기)
-  const { status: gpsStatus } = useLocationTracking();
 
   const openDrawer = useCallback(() => {
     setMenuVisible(true);
@@ -470,7 +453,6 @@ export default function DiagnosisManagement() {
             </TouchableOpacity>
           )}
         </View>
-
       </View>
     );
   };
@@ -490,6 +472,16 @@ export default function DiagnosisManagement() {
                     <Ionicons name="close" size={22} color={theme.textSub} />
                   </TouchableOpacity>
                 </View>
+                <TouchableOpacity
+                  style={[styles.drawerItem, { borderBottomColor: theme.border }]}
+                  onPress={() => { closeDrawer(); setTimeout(() => router.push('/my-schedule' as any), 250); }}
+                >
+                  <View style={[styles.drawerItemIcon, { backgroundColor: isDark ? '#1e1a2e' : '#f3f0ff' }]}>
+                    <Ionicons name="calendar-outline" size={20} color={theme.accent} />
+                  </View>
+                  <Text style={[styles.drawerItemText, { color: theme.textMain }]}>내 스케줄</Text>
+                  <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.drawerItem, { borderBottomColor: theme.border }]}
                   onPress={() => { closeDrawer(); setTimeout(() => router.push('/PaintMeterScreen' as any), 250); }}

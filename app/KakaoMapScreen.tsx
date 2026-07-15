@@ -1,0 +1,295 @@
+import { Ionicons } from '@expo/vector-icons';
+import axios from 'axios';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useColorScheme,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
+import { KAKAO_JS_API_KEY, KAKAO_REST_API_KEY } from '../constants/api';
+
+interface MarkerInfo {
+  lat: number;
+  lng: number;
+  title: string;
+  address: string;
+  dateTime: string;
+}
+
+const geocodeKakao = async (address: string): Promise<{ lat: number; lng: number } | null> => {
+  try {
+    const headers = { Authorization: `KakaoAK ${KAKAO_REST_API_KEY}` };
+    const res = await axios.get('https://dapi.kakao.com/v2/local/search/address.json', {
+      params: { query: address }, headers,
+    });
+    const doc = res.data?.documents?.[0];
+    if (doc) return { lat: parseFloat(doc.y), lng: parseFloat(doc.x) };
+    const res2 = await axios.get('https://dapi.kakao.com/v2/local/search/keyword.json', {
+      params: { query: address }, headers,
+    });
+    const doc2 = res2.data?.documents?.[0];
+    if (doc2) return { lat: parseFloat(doc2.y), lng: parseFloat(doc2.x) };
+    return null;
+  } catch { return null; }
+};
+
+// 차량 아이콘 SVG (base64) — 카비오 보라색 핀 스타일
+const CAR_MARKER_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="54" height="64" viewBox="0 0 54 64">
+  <!-- 핀 몸통 -->
+  <ellipse cx="27" cy="28" rx="24" ry="24" fill="#63489a" stroke="#fff" stroke-width="2.5"/>
+  <!-- 핀 꼬리 -->
+  <polygon points="20,46 27,64 34,46" fill="#63489a"/>
+  <!-- 차량 아이콘 (흰색) -->
+  <g transform="translate(10, 13) scale(0.64)">
+    <path d="M44 14H10C7.8 14 5.9 15.3 5.1 17.3L2 26v18c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2v-2h36v2c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2V26l-3.1-8.7C44.1 15.3 42.2 14 44 14z" fill="none"/>
+    <path d="M43.2 13H10.8C8.5 13 6.5 14.4 5.6 16.5L2 26v18c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2v-2h36v2c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2V26l-3.6-9.5C45.5 14.4 43.5 13 43.2 13z" fill="white" opacity="0.95"/>
+    <path d="M10.8 15h32.4c1.1 0 2.1.7 2.5 1.7L48 24H6l2.3-7.3C8.7 15.7 9.7 15 10.8 15z" fill="#63489a"/>
+    <circle cx="12" cy="35" r="4" fill="#63489a"/>
+    <circle cx="42" cy="35" r="4" fill="#63489a"/>
+  </g>
+</svg>
+`.trim();
+
+const CAR_MARKER_B64 = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(CAR_MARKER_SVG)))}`;
+
+function buildMapHtml(markers: MarkerInfo[]): string {
+  const center =
+    markers.length > 0
+      ? {
+          lat: markers.reduce((s, m) => s + m.lat, 0) / markers.length,
+          lng: markers.reduce((s, m) => s + m.lng, 0) / markers.length,
+        }
+      : { lat: 37.5665, lng: 126.978 };
+
+  const level = markers.length > 1 ? 9 : 4;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; background:#f0f0f0; }
+    #map { width:100%; height:100%; }
+    .badge {
+      position:fixed; top:10px; left:50%; transform:translateX(-50%);
+      background:rgba(99,72,154,0.92); color:#fff;
+      padding:6px 16px; border-radius:20px; font-size:13px;
+      font-weight:600; letter-spacing:0.3px; z-index:9999;
+      box-shadow:0 2px 8px rgba(0,0,0,0.25);
+    }
+    #errbox {
+      display:none; position:fixed; inset:0; background:#fff;
+      flex-direction:column; align-items:center; justify-content:center;
+      padding:24px; z-index:9998; text-align:center;
+    }
+    #errbox .title { font-size:17px; font-weight:700; color:#e53e3e; margin-bottom:10px; }
+    #errbox .desc { font-size:13px; color:#555; line-height:1.7; }
+    #errbox .hint { margin-top:16px; font-size:12px; color:#999; line-height:1.6; background:#f7f7f7; padding:12px; border-radius:8px; }
+  </style>
+  <script>
+    window.onerror = function(msg, src, line, col, err) {
+      var box = document.getElementById('errbox');
+      if (box) {
+        box.style.display = 'flex';
+        document.getElementById('errmsg').textContent = msg;
+      }
+      return true;
+    };
+  </script>
+  <script
+    src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_JS_API_KEY}&autoload=false"
+    onerror="document.getElementById('errbox').style.display='flex'; document.getElementById('errmsg').textContent='Kakao Maps SDK 로드 실패 — 도메인 미등록 또는 키 오류';">
+  </script>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="badge">${markers.length}개 예약 위치</div>
+  <div id="errbox">
+    <div class="title">지도 로드 실패</div>
+    <div class="desc" id="errmsg">알 수 없는 오류</div>
+    <div class="hint">
+      카카오 개발자 콘솔 → 내 애플리케이션 → 플랫폼 → Web<br>
+      사이트 도메인에 <b>https://carvior.store</b> 등록 후 재시도
+    </div>
+  </div>
+  <script>
+    var markerData = ${JSON.stringify(markers)};
+
+    if (typeof kakao === 'undefined') {
+      document.getElementById('errbox').style.display = 'flex';
+      document.getElementById('errmsg').textContent = 'kakao 객체 없음 — SDK 로드 실패 (도메인 미등록 가능성)';
+    } else {
+      kakao.maps.load(function() {
+        try {
+          var mapContainer = document.getElementById('map');
+          var map = new kakao.maps.Map(mapContainer, {
+            center: new kakao.maps.LatLng(${center.lat}, ${center.lng}),
+            level: ${level}
+          });
+
+          var bounds = new kakao.maps.LatLngBounds();
+          var infoOverlays = [];
+
+          // 차량 핀 HTML 생성 함수 (SVG 속성은 큰따옴표 사용)
+          function carPin(num) {
+            var p = 'M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z';
+            return '<div onclick="toggleInfo(' + num + ')" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;filter:drop-shadow(0 3px 8px rgba(0,0,0,0.35));">'
+              + '<div style="width:50px;height:50px;background:#63489a;border-radius:50%;border:3.5px solid white;display:flex;align-items:center;justify-content:center;">'
+              + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28">'
+              + '<path d="' + p + '" fill="white"/>'
+              + '</svg>'
+              + '</div>'
+              + '<div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:13px solid #63489a;margin-top:-2px;"></div>'
+              + '<div style="background:#63489a;color:white;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700;font-family:sans-serif;margin-top:3px;min-width:20px;text-align:center;">' + num + '</div>'
+              + '</div>';
+          }
+
+          for (var i = 0; i < markerData.length; i++) {
+            (function(info, idx) {
+              var pos = new kakao.maps.LatLng(info.lat, info.lng);
+              bounds.extend(pos);
+
+              new kakao.maps.CustomOverlay({
+                map: map,
+                position: pos,
+                content: carPin(idx + 1),
+                yAnchor: 1.0,
+                zIndex: 3
+              });
+
+              var infoDiv = '<div style="position:relative;background:white;border-radius:12px;padding:13px 16px;min-width:190px;max-width:250px;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-family:sans-serif;">'
+                + '<div onclick="toggleInfo(' + idx + ')" style="position:absolute;top:9px;right:11px;cursor:pointer;font-size:18px;color:#aaa;line-height:1;">×</div>'
+                + '<div style="font-size:14px;font-weight:700;color:#63489a;margin-bottom:5px;padding-right:16px;">' + info.title + '</div>'
+                + '<div style="font-size:12px;color:#555;margin-bottom:3px;">📍 ' + info.address + '</div>'
+                + '<div style="font-size:12px;color:#888;">🕐 ' + info.dateTime + '</div>'
+                + '</div>';
+
+              var infoOverlay = new kakao.maps.CustomOverlay({
+                position: pos,
+                content: infoDiv,
+                yAnchor: 1.6,
+                zIndex: 5
+              });
+              infoOverlays.push(infoOverlay);
+            })(markerData[i], i);
+          }
+
+          window.toggleInfo = function(idx) {
+            var zero = idx - 1;
+            for (var j = 0; j < infoOverlays.length; j++) {
+              if (j === zero) {
+                infoOverlays[j].setMap(infoOverlays[j].getMap() ? null : map);
+              } else {
+                infoOverlays[j].setMap(null);
+              }
+            }
+          };
+
+          if (markerData.length > 1) { map.setBounds(bounds, 70); }
+          map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+        } catch(e) {
+          document.getElementById('errbox').style.display = 'flex';
+          document.getElementById('errmsg').textContent = e.message;
+        }
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
+
+export default function KakaoMapScreen() {
+  const isDark = useColorScheme() === 'dark';
+  const router = useRouter();
+  const params = useLocalSearchParams<{ items: string }>();
+  const [markers, setMarkers] = useState<MarkerInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = JSON.parse(params.items || '[]') as Array<{
+          address: string;
+          title: string;
+          dateTime: string;
+        }>;
+        const results = await Promise.all(
+          raw.map(async item => {
+            const coords = await geocodeKakao(item.address);
+            return coords
+              ? { ...coords, title: item.title, address: item.address, dateTime: item.dateTime }
+              : null;
+          })
+        );
+        const valid = results.filter((r): r is MarkerInfo => r !== null);
+        if (valid.length === 0) setError('주소를 지도에서 찾을 수 없습니다.');
+        else setMarkers(valid);
+      } catch {
+        setError('데이터를 불러오지 못했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [params.items]);
+
+  const bg = isDark ? '#111' : '#fff';
+  const textMain = isDark ? '#fff' : '#000';
+
+  return (
+    <SafeAreaView style={[styles.safe, { backgroundColor: bg }]}>
+      <View style={[styles.header, { backgroundColor: bg, borderBottomColor: isDark ? '#222' : '#eee' }]}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={26} color={textMain} />
+        </TouchableOpacity>
+        <Text style={[styles.title, { color: textMain }]}>예약 위치 지도</Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color="#63489a" />
+          <Text style={[styles.msg, { color: isDark ? '#aaa' : '#666' }]}>주소 변환 중...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.center}>
+          <Ionicons name="alert-circle-outline" size={48} color="#e53e3e" />
+          <Text style={[styles.msg, { color: '#e53e3e' }]}>{error}</Text>
+        </View>
+      ) : (
+        <WebView
+          style={styles.webview}
+          source={{ html: buildMapHtml(markers), baseUrl: 'https://carvior.store' }}
+          javaScriptEnabled
+          domStorageEnabled
+          originWhitelist={['*']}
+          mixedContentMode="always"
+          allowFileAccess
+          allowUniversalAccessFromFileURLs
+        />
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: { flex: 1 },
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 14, borderBottomWidth: 1,
+  },
+  backBtn: { padding: 4, width: 40 },
+  title: { fontSize: 17, fontWeight: '700' },
+  webview: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 },
+  msg: { fontSize: 14 },
+});

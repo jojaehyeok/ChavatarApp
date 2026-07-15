@@ -99,7 +99,8 @@ const _runTask = async (task: _UploadTask) => {
         });
         if (classRes.ok) {
           const { category, label } = await classRes.json();
-          if (category && category !== task.categoryId) {
+          // 단일 이미지 카테고리(계기판/등록증/보험이력)로 분류되면 무시
+          if (category && category !== task.categoryId && !SINGLE_IMG_CATS.includes(category)) {
             finalCat = category;
             _G.onClassified?.(task.categoryId, category, label);
           }
@@ -213,6 +214,8 @@ export default function CarEvaluationSheet() {
     undercarriage: [],
     interior: [],
     engine: [],
+    extra: [],
+    damage: [],
     paperSheet: [],
   });
 
@@ -298,10 +301,18 @@ export default function CarEvaluationSheet() {
           prev.map((img) => (img === uri ? s3url : img)),
         );
       } else {
-        setImages((prev) => ({
-          ...prev,
-          [cat]: (prev[cat] || []).map((img) => (img === uri ? s3url : img)),
-        }));
+        setImages((prev) => {
+          const updated = { ...prev };
+          // 모든 카테고리에서 로컬 URI 제거 (AI가 카테고리 바꿔도 원본 제거)
+          for (const key of Object.keys(updated)) {
+            if (updated[key].includes(uri)) {
+              updated[key] = updated[key].filter((img) => img !== uri);
+            }
+          }
+          // 최종 카테고리에 S3 URL 추가
+          updated[cat] = [...(updated[cat] || []), s3url];
+          return updated;
+        });
       }
     };
     _G.onCount = (n) => setUploadPending(n);
@@ -592,6 +603,8 @@ export default function CarEvaluationSheet() {
             undercarriage: [],
             interior: [],
             engine: [],
+            extra: [],
+            damage: [],
             paperSheet: [],
           },
         );
@@ -833,7 +846,7 @@ export default function CarEvaluationSheet() {
     }
     // MediaLibrary 권한 실패 시 기존 시스템 피커로 폴백
     if (!mlGranted) {
-      pickImage(categoryId, "library", false);
+      pickImage(categoryId, "library", SINGLE_IMG_CATS.includes(categoryId));
       return;
     }
     setPickerCategoryId(categoryId);
@@ -872,6 +885,8 @@ export default function CarEvaluationSheet() {
     const categorySnapshot = pickerCategoryId;
     const uris = selectedList.map((a) => a.uri);
 
+    console.log('[Picker] 확인:', categorySnapshot, uris.length, '장', uris[0]?.slice(0, 60));
+
     setPickerVisible(false);
     setPickerSelected(new Set());
 
@@ -879,6 +894,7 @@ export default function CarEvaluationSheet() {
 
     if (SINGLE_IMG_CATS.includes(categorySnapshot)) {
       const uri = uris[0];
+      console.log('[Picker] 단일 이미지 설정:', categorySnapshot, uri?.slice(0, 60));
       if (categorySnapshot === "dashboard") setDashboardImage(uri);
       else if (categorySnapshot === "registration") setRegImage(uri);
       else if (categorySnapshot === "vin") setVinImage(uri);
@@ -1156,18 +1172,26 @@ export default function CarEvaluationSheet() {
       <View style={styles.dashBoxWrapper}>
         <TouchableOpacity
           style={styles.dashBox}
-          onPress={() =>
-            isViewMode
-              ? uri
-                ? (setViewerImages([uri]),
-                  setViewerIndex(0),
-                  setViewerVisible(true))
-                : undefined
-              : openCustomPicker(categoryId)
-          }
+          onPress={() => {
+            if (uri) {
+              // 이미지 있으면 항상 확대 보기
+              setViewerImages([uri]);
+              setViewerIndex(0);
+              setViewerVisible(true);
+            } else if (!isViewMode) {
+              openCustomPicker(categoryId);
+            }
+          }}
+          onLongPress={() => {
+            if (!isViewMode) openCustomPicker(categoryId);
+          }}
         >
           {uri ? (
-            <Image source={{ uri }} style={styles.fullImg} resizeMode="cover" />
+            <Image
+              source={{ uri }}
+              style={styles.fullImg}
+              resizeMode="cover"
+            />
           ) : (
             <>
               <Ionicons name="camera" size={24} color="#666" />
@@ -1487,6 +1511,10 @@ export default function CarEvaluationSheet() {
               data={pickerAssets}
               keyExtractor={(item) => item.id}
               numColumns={3}
+              removeClippedSubviews={true}
+              maxToRenderPerBatch={12}
+              windowSize={5}
+              initialNumToRender={12}
               onEndReached={() => {
                 if (pickerHasMore && !pickerLoading)
                   loadPickerAssets(pickerCurrentAlbum, pickerEndCursor);
