@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -11,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { KAKAO_JS_API_KEY, KAKAO_REST_API_KEY } from '../constants/api';
 
 interface MarkerInfo {
@@ -38,26 +39,6 @@ const geocodeKakao = async (address: string): Promise<{ lat: number; lng: number
     return null;
   } catch { return null; }
 };
-
-// 차량 아이콘 SVG (base64) — 카비오 보라색 핀 스타일
-const CAR_MARKER_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" width="54" height="64" viewBox="0 0 54 64">
-  <!-- 핀 몸통 -->
-  <ellipse cx="27" cy="28" rx="24" ry="24" fill="#63489a" stroke="#fff" stroke-width="2.5"/>
-  <!-- 핀 꼬리 -->
-  <polygon points="20,46 27,64 34,46" fill="#63489a"/>
-  <!-- 차량 아이콘 (흰색) -->
-  <g transform="translate(10, 13) scale(0.64)">
-    <path d="M44 14H10C7.8 14 5.9 15.3 5.1 17.3L2 26v18c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2v-2h36v2c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2V26l-3.1-8.7C44.1 15.3 42.2 14 44 14z" fill="none"/>
-    <path d="M43.2 13H10.8C8.5 13 6.5 14.4 5.6 16.5L2 26v18c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2v-2h36v2c0 1.1.9 2 2 2h2c1.1 0 2-.9 2-2V26l-3.6-9.5C45.5 14.4 43.5 13 43.2 13z" fill="white" opacity="0.95"/>
-    <path d="M10.8 15h32.4c1.1 0 2.1.7 2.5 1.7L48 24H6l2.3-7.3C8.7 15.7 9.7 15 10.8 15z" fill="#63489a"/>
-    <circle cx="12" cy="35" r="4" fill="#63489a"/>
-    <circle cx="42" cy="35" r="4" fill="#63489a"/>
-  </g>
-</svg>
-`.trim();
-
-const CAR_MARKER_B64 = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(CAR_MARKER_SVG)))}`;
 
 function buildMapHtml(markers: MarkerInfo[]): string {
   const center =
@@ -139,17 +120,25 @@ function buildMapHtml(markers: MarkerInfo[]): string {
           var bounds = new kakao.maps.LatLngBounds();
           var infoOverlays = [];
 
-          // 차량 핀 HTML 생성 함수 (SVG 속성은 큰따옴표 사용)
-          function carPin(num) {
-            var p = 'M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z';
+          // 네이티브로 URL 오픈 요청 (WebView는 target=_blank를 못 엶)
+          function openExternal(url) {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'openUrl', url: url }));
+            }
+          }
+
+          // 카비오 로고 핀 HTML 생성 함수
+          function logoPin(num) {
             return '<div onclick="toggleInfo(' + num + ')" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;filter:drop-shadow(0 3px 8px rgba(0,0,0,0.35));">'
-              + '<div style="width:50px;height:50px;background:#63489a;border-radius:50%;border:3.5px solid white;display:flex;align-items:center;justify-content:center;">'
-              + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28">'
-              + '<path d="' + p + '" fill="white"/>'
+              + '<div style="width:46px;height:46px;background:#7C3AED;border-radius:14px;border:3px solid white;display:flex;align-items:center;justify-content:center;">'
+              + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="26" height="26">'
+              + '<path d="M67 36C57 27 33 30 30 50C27 70 46 75 60 70" stroke="white" stroke-width="12" stroke-linecap="round" fill="none"/>'
+              + '<line x1="70" y1="44" x2="58" y2="44" stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.55"/>'
+              + '<line x1="70" y1="56" x2="53" y2="56" stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.55"/>'
               + '</svg>'
               + '</div>'
-              + '<div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:13px solid #63489a;margin-top:-2px;"></div>'
-              + '<div style="background:#63489a;color:white;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700;font-family:sans-serif;margin-top:3px;min-width:20px;text-align:center;">' + num + '</div>'
+              + '<div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:11px solid #7C3AED;margin-top:-2px;"></div>'
+              + '<div style="background:#7C3AED;color:white;border-radius:12px;padding:2px 8px;font-size:11px;font-weight:700;font-family:sans-serif;margin-top:3px;min-width:20px;text-align:center;">' + num + '</div>'
               + '</div>';
           }
 
@@ -161,16 +150,23 @@ function buildMapHtml(markers: MarkerInfo[]): string {
               new kakao.maps.CustomOverlay({
                 map: map,
                 position: pos,
-                content: carPin(idx + 1),
+                content: logoPin(idx + 1),
                 yAnchor: 1.0,
                 zIndex: 3
               });
 
-              var infoDiv = '<div style="position:relative;background:white;border-radius:12px;padding:13px 16px;min-width:190px;max-width:250px;box-shadow:0 4px 16px rgba(0,0,0,0.2);font-family:sans-serif;">'
+              var navUrl = 'https://map.kakao.com/link/to/' + encodeURIComponent(info.title) + ',' + info.lat + ',' + info.lng;
+              var roadviewUrl = 'https://map.kakao.com/link/roadview/' + info.lat + ',' + info.lng;
+
+              var infoDiv = '<div style="position:relative;background:white;border-radius:14px;padding:14px 16px 12px;min-width:210px;max-width:260px;box-shadow:0 4px 20px rgba(0,0,0,0.22);font-family:sans-serif;">'
                 + '<div onclick="toggleInfo(' + idx + ')" style="position:absolute;top:9px;right:11px;cursor:pointer;font-size:18px;color:#aaa;line-height:1;">×</div>'
-                + '<div style="font-size:14px;font-weight:700;color:#63489a;margin-bottom:5px;padding-right:16px;">' + info.title + '</div>'
+                + '<div style="font-size:14px;font-weight:700;color:#63489a;margin-bottom:6px;padding-right:18px;">' + info.title + '</div>'
                 + '<div style="font-size:12px;color:#555;margin-bottom:3px;">📍 ' + info.address + '</div>'
-                + '<div style="font-size:12px;color:#888;">🕐 ' + info.dateTime + '</div>'
+                + '<div style="font-size:12px;color:#888;margin-bottom:10px;">🕐 ' + info.dateTime + '</div>'
+                + '<div style="display:flex;gap:7px;">'
+                + '<div onclick="openExternal(\\'' + navUrl + '\\')" style="flex:1;background:#63489a;color:white;text-align:center;padding:7px 0;border-radius:8px;font-size:12px;font-weight:700;">🚗 길찾기</div>'
+                + '<div onclick="openExternal(\\'' + roadviewUrl + '\\')" style="flex:1;background:#f1f0f7;color:#63489a;text-align:center;padding:7px 0;border-radius:8px;font-size:12px;font-weight:700;">🔭 로드뷰</div>'
+                + '</div>'
                 + '</div>';
 
               var infoOverlay = new kakao.maps.CustomOverlay({
