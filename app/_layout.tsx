@@ -6,13 +6,14 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useLocationTracking } from '@/hooks/useLocationTracking';
 
 // 1. 에러 바운더리 수출 (Expo Router 필수)
 export { ErrorBoundary } from 'expo-router';
 
 // 2. 초기 라우트 설정
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
+  initialRouteName: '(auth)',
 };
 
 // 3. 스플래시 화면 자동 숨김 방지
@@ -21,6 +22,7 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [appIsReady, setAppIsReady] = useState(false);
+  useLocationTracking();
 
   // 폰트 및 리소스 로딩
   const [loaded, error] = useFonts({

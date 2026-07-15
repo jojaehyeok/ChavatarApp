@@ -61,6 +61,12 @@
       ],
       "expo-asset",
       [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "위치 정보를 실시간으로 전송하기 위해 위치 접근 권한이 필요합니다."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/images/icon.png",

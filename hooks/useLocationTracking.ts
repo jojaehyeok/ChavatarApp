@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API = 'https://carvior.store/api/v1';
-const INTERVAL_MS = 30_000; // 30초
+const INTERVAL_MS = 120_000; // 2분
 
 export type LocationStatus = 'idle' | 'requesting' | 'denied' | 'tracking' | 'error';
 
@@ -13,10 +13,18 @@ export function useLocationTracking() {
 
   const sendLocation = async (driverId: string) => {
     try {
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+      console.log('[GPS] requesting position...');
+      const loc = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('location fix timed out after 15s')), 15000)
+        ),
+      ]).catch(async (err) => {
+        const last = await Location.getLastKnownPositionAsync();
+        if (last) return last;
+        throw err;
       });
-      await fetch(`${API}/drivers/${driverId}/location`, {
+      const res = await fetch(`${API}/drivers/${driverId}/location`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -24,8 +32,9 @@ export function useLocationTracking() {
           lng: loc.coords.longitude,
         }),
       });
-    } catch {
-      // 네트워크 오류 시 조용히 실패 (다음 주기에 재시도)
+      console.log('[GPS] sent', loc.coords.latitude, loc.coords.longitude, 'status', res.status);
+    } catch (e) {
+      console.log('[GPS] failed', e instanceof Error ? e.message : String(e));
     }
   };
 
