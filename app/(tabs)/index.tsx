@@ -113,39 +113,50 @@ interface DateFilterStripProps {
 }
 
 function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFilterStripProps) {
-  const strip = getDateStrip(30);
   const todayYmd = toYMD(new Date());
 
+  const selectedShadow = {
+    backgroundColor: theme.card,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
+  };
+
   return (
-    <View style={[styles.dateStripScroll, { flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 6 }]}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.dateStripScroll}
+      contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 6, gap: 6 }}
+    >
       <TouchableOpacity
-        style={[styles.dateChip, { flex: 1 }, filterDate === 'all' && { backgroundColor: theme.accent }]}
+        style={[styles.dateChip, { width: 52 }, filterDate === 'all' && selectedShadow]}
         onPress={() => onSelect('all')}
       >
-        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? '#fff' : theme.textSub }]}>전체</Text>
+        <Text style={[styles.dateChipDay, { color: filterDate === 'all' ? theme.accent : theme.textSub }]}>전체</Text>
       </TouchableOpacity>
-      {strip.map(d => {
-        const ymd = toYMD(d);
-        if (!upcomingDates.includes(ymd)) return null;
+      {upcomingDates.map(ymd => {
+        const d = new Date(ymd);
         const isSelected = filterDate === ymd;
         const isToday = ymd === todayYmd;
         return (
           <TouchableOpacity
             key={ymd}
-            style={[styles.dateChip, { flex: 1 }, isSelected && { backgroundColor: theme.accent }]}
+            style={[styles.dateChip, { width: 52 }, isSelected && selectedShadow]}
             onPress={() => onSelect(ymd)}
           >
-            <Text style={[styles.dateChipDay, { color: isSelected ? '#fff' : theme.textSub }]}>
+            <Text style={[styles.dateChipDay, { color: isSelected ? theme.accent : theme.textSub }]}>
               {isToday ? '오늘' : DAY_KO[d.getDay()]}
             </Text>
-            <Text style={[styles.dateChipNum, { color: isSelected ? '#fff' : theme.textMain }]}>
+            <Text style={[styles.dateChipNum, { color: isSelected ? theme.accent : theme.textMain }]}>
               {d.getDate()}
             </Text>
-            {!isSelected && <View style={[styles.dateChipDot, { backgroundColor: theme.accent }]} />}
           </TouchableOpacity>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }
 

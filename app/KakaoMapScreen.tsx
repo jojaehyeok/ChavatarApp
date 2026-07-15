@@ -121,11 +121,12 @@ function buildMapHtml(markers: MarkerInfo[]): string {
           var infoOverlays = [];
 
           // 네이티브로 URL 오픈 요청 (WebView는 target=_blank를 못 엶)
-          function openExternal(url) {
+          // onclick="" 인라인 핸들러에서 호출되므로 전역(window)에 등록해야 함 (toggleInfo와 동일 패턴)
+          window.openExternal = function(url) {
             if (window.ReactNativeWebView) {
               window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'openUrl', url: url }));
             }
-          }
+          };
 
           // 카비오 로고 핀 HTML 생성 함수
           function logoPin(num) {
