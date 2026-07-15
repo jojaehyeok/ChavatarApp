@@ -211,6 +211,17 @@ export default function KakaoMapScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const handleWebViewMessage = (event: WebViewMessageEvent) => {
+    try {
+      const payload = JSON.parse(event.nativeEvent.data);
+      if (payload?.type === 'openUrl' && payload.url) {
+        Linking.openURL(payload.url);
+      }
+    } catch {
+      // 무시 (예상치 못한 메시지 포맷)
+    }
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -271,6 +282,7 @@ export default function KakaoMapScreen() {
           mixedContentMode="always"
           allowFileAccess
           allowUniversalAccessFromFileURLs
+          onMessage={handleWebViewMessage}
         />
       )}
     </SafeAreaView>
