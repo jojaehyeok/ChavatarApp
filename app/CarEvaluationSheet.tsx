@@ -184,7 +184,7 @@ const onlyS3 = (urls: string[]) =>
 
 // ─── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function CarEvaluationSheet() {
-  const { requestId, carNumber, carModel, serviceType, mode } =
+  const { requestId, carNumber, carModel, serviceType, mode, adminRequest } =
     useLocalSearchParams();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -506,10 +506,14 @@ export default function CarEvaluationSheet() {
 
   // ─── AsyncStorage 저장/복원 ───────────────────────────────────────────────
   useEffect(() => {
+    // adminRequest: 관리자가 재촬영/수정을 요청한 딥링크로 들어온 경우 —
+    // 관리자가 명시적으로 수정을 요청한 것이므로 2시간 제한과 무관하게 편집 허용
+    // (진단사 본인은 물론, 이 링크를 받은 매니저도 같은 방식으로 편집 가능)
+    const isAdminRequest = adminRequest === "1";
     if (isViewMode) {
       loadEditData(true);
     } else if (isEditMode) {
-      loadEditData(false);
+      loadEditData(isAdminRequest);
     } else {
       loadSavedData();
     }
