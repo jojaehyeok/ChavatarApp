@@ -417,8 +417,11 @@ export default function CarEvaluationSheet() {
       const d = await res.json();
 
       // ── 2시간 수정 제한 체크 (view 모드는 생략) ──────────────────────────
-      if (!skipLimitCheck && d.completedAt) {
-        const elapsed = Date.now() - new Date(d.completedAt).getTime();
+      // firstCompletedAt: 최초 진단완료 후 재저장해도 안 바뀌는 고정 기준점.
+      // (완료 시각을 계속 갱신하는 completedAt을 쓰면 저장할 때마다 마감이 2시간씩 밀려버림)
+      const lockAnchor = d.firstCompletedAt || d.completedAt;
+      if (!skipLimitCheck && lockAnchor) {
+        const elapsed = Date.now() - new Date(lockAnchor).getTime();
         if (elapsed > EDIT_LIMIT_MS) {
           const hoursAgo = Math.floor(elapsed / 3600000);
           const minutesAgo = Math.floor((elapsed % 3600000) / 60000);

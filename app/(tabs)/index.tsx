@@ -90,6 +90,7 @@ interface DiagnosisItem {
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
+  firstCompletedAt?: string;
 }
 
 interface Theme {
@@ -495,7 +496,10 @@ export default function DiagnosisManagement() {
         </View>
       );
     }
-    const completedTime = item.completedAt || item.updatedAt;
+    // firstCompletedAt은 최초 진단완료 후 재저장해도 안 바뀌는 고정 기준점 —
+    // completedAt/updatedAt을 쓰면 수정할 때마다 2시간이 계속 늘어나버림.
+    // (firstCompletedAt이 없는 과거 데이터는 기존 방식으로 폴백)
+    const completedTime = item.firstCompletedAt || item.completedAt || item.updatedAt;
     const canEdit = completedTime ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000 : false;
     const itemRating = ratingMap[String(item.id)];
     return (
