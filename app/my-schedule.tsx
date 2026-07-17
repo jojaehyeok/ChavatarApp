@@ -21,11 +21,6 @@ const DAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
 const VEHICLE_OPTIONS = ['승용차', 'SUV', '트럭', '승합차', '전기차'];
 
-const REGION_OPTIONS = [
-  '서울', '경기', '인천', '부산', '대구', '광주', '대전', '울산', '세종',
-  '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주',
-];
-
 // 30분 단위 시간 슬롯 생성 (08:00 ~ 20:00)
 function genTimeSlots(fromH = 8, toH = 20): string[] {
   const slots: string[] = [];
@@ -91,12 +86,6 @@ export default function MyScheduleScreen() {
     );
   };
 
-  const toggleRegion = (r: string) => {
-    setSelectedRegions(prev =>
-      prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]
-    );
-  };
-
   const toggleVehicle = (v: string) => {
     setSelectedVehicles(prev =>
       prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v]
@@ -106,15 +95,14 @@ export default function MyScheduleScreen() {
   const handleSave = async () => {
     if (!driverId) return;
     if (selectedDays.length === 0) { Alert.alert('알림', '가능 요일을 1개 이상 선택해주세요.'); return; }
-    if (selectedRegions.length === 0) { Alert.alert('알림', '가능 지역을 1개 이상 선택해주세요.'); return; }
     setSaving(true);
     try {
+      // 지역(regions)은 관리자가 대시보드에서 등록 — 앱에서는 절대 덮어쓰지 않음
       await axios.patch(`${API_BASE_URL}/drivers/${driverId}/availability`, {
         availableDays: selectedDays,
         availableStartTime: startTime,
         availableEndTime: endTime,
         maxDailyBookings: maxDaily,
-        regions: selectedRegions,
         vehicleTypes: selectedVehicles,
       });
       Alert.alert('저장 완료', '스케줄이 업데이트되었습니다.', [{ text: '확인', onPress: () => router.back() }]);
@@ -260,22 +248,18 @@ export default function MyScheduleScreen() {
           </View>
         </View>
 
-        {/* 가능 지역 */}
+        {/* 가능 지역 (관리자 등록 — 앱에서 수정 불가) */}
         <View style={[s.section, { backgroundColor: card, borderColor: border }]}>
           <Text style={[s.sectionTitle, { color: text }]}>가능 지역</Text>
+          <Text style={[s.sectionSub, { color: sub }]}>관리자가 등록합니다. 변경이 필요하면 관리자에게 문의해주세요.</Text>
           <View style={s.chipWrap}>
-            {REGION_OPTIONS.map(r => {
-              const selected = selectedRegions.includes(r);
-              return (
-                <TouchableOpacity
-                  key={r}
-                  style={[s.chip, { backgroundColor: selected ? accent : slotBg, borderColor: selected ? accent : border }]}
-                  onPress={() => toggleRegion(r)}
-                >
-                  <Text style={[s.chipText, { color: selected ? '#fff' : text }]}>{r}</Text>
-                </TouchableOpacity>
-              );
-            })}
+            {selectedRegions.length > 0 ? selectedRegions.map(r => (
+              <View key={r} style={[s.chip, { backgroundColor: slotBg, borderColor: border }]}>
+                <Text style={[s.chipText, { color: sub }]}>{r}</Text>
+              </View>
+            )) : (
+              <Text style={[s.sectionSub, { color: sub, marginBottom: 0 }]}>아직 등록된 지역이 없습니다.</Text>
+            )}
           </View>
         </View>
 
