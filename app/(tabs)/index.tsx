@@ -1045,7 +1045,7 @@ export default function DiagnosisManagement() {
                 <Ionicons name="document-text-outline" size={22} color={theme.accent} />
                 <Text style={[styles.contactOptionText, { color: theme.textMain }]}>요청사항 확인</Text>
               </TouchableOpacity>
-              {driverTier === 'general' && !moreOptionsItem?.roundingRequested && (
+              {!moreOptionsItem?.roundingRequested && (
                 <TouchableOpacity
                   style={styles.contactOption}
                   onPress={() => {
