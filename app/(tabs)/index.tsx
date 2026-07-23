@@ -490,9 +490,8 @@ export default function DiagnosisManagement() {
         // 진단/에이전트 등급은 다른 평가사가 올린 라운딩 요청을 예약 요청 탭에서 함께 확인 가능
         const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
         if (activeTab === 'request') return item.status === 'PENDING' || (item.roundingRequested && canSeeRounding);
-        // 에이전트는 본인 배정건 여부와 무관하게 전체를 확인할 수 있어야 함
-        if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && (isMy || isAgentTier);
-        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe || isAgentTier);
+        if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
+        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
       });
       // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
       // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
