@@ -108,6 +108,7 @@ interface DiagnosisItem {
   assignedDriverId?: string | null;
   assignedDriverName?: string | null;
   assignedByAgentId?: string | null;
+  roundingRequested?: boolean;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -310,6 +311,8 @@ export default function DiagnosisManagement() {
   const [contactEditValue, setContactEditValue] = useState('');
   const [requestInfoItem, setRequestInfoItem] = useState<DiagnosisItem | null>(null);
   const [isAgentTier, setIsAgentTier] = useState(false);
+  const [driverTier, setDriverTier] = useState<'general' | 'certified' | 'agent'>('general');
+  const [roundingSaving, setRoundingSaving] = useState(false);
   const [agentAssignItem, setAgentAssignItem] = useState<DiagnosisItem | null>(null);
   const [agentDriverList, setAgentDriverList] = useState<{ id: number; name: string }[]>([]);
   const [agentAssigning, setAgentAssigning] = useState(false);
@@ -392,6 +395,7 @@ export default function DiagnosisManagement() {
       .then(res => {
         if (typeof res.data?.isActive === 'boolean') setIsActiveOn(res.data.isActive);
         setIsAgentTier(res.data?.tier === 'agent');
+        setDriverTier(res.data?.tier === 'certified' || res.data?.tier === 'agent' ? res.data.tier : 'general');
       })
       .catch(() => {});
   }, [currentDriverId]);
@@ -483,9 +487,12 @@ export default function DiagnosisManagement() {
         const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
         // 에이전트가 다른 진단사에게 지정 배정한 건은, 배정한 본인도 완료된 예약 탭에서 리포트를 확인/수정할 수 있어야 함
         const isAgentAssignedByMe = String(item.assignedByAgentId) === String(currentDriverId);
-        if (activeTab === 'request') return item.status === 'PENDING';
-        if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
-        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
+        // 진단/에이전트 등급은 다른 평가사가 올린 라운딩 요청을 예약 요청 탭에서 함께 확인 가능
+        const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
+        if (activeTab === 'request') return item.status === 'PENDING' || (item.roundingRequested && canSeeRounding);
+        // 에이전트는 본인 배정건 여부와 무관하게 전체를 확인할 수 있어야 함
+        if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && (isMy || isAgentTier);
+        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe || isAgentTier);
       });
       // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
       // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
@@ -562,6 +569,38 @@ export default function DiagnosisManagement() {
       fetchData();
     } catch { Alert.alert('오류', '지정 배정에 실패했습니다.'); }
     finally { setAgentAssigning(false); }
+  };
+
+  const handleRequestRounding = (item: DiagnosisItem) => {
+    Alert.alert('라운딩 요청', '이 건을 진단/에이전트 평가사에게 라운딩 요청할까요?', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '요청하기',
+        onPress: async () => {
+          try {
+            await axios.patch(`${API_BASE_URL}/external/request/${item.id}/request-rounding`, {
+              driverId: currentDriverId,
+            });
+            Alert.alert('요청 완료', '라운딩 요청을 보냈습니다.');
+            fetchData();
+          } catch { Alert.alert('오류', '라운딩 요청에 실패했습니다.'); }
+        },
+      },
+    ]);
+  };
+
+  const handleAcceptRounding = async (item: DiagnosisItem) => {
+    setRoundingSaving(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${item.id}/accept-rounding`, {
+        driverId: currentDriverId,
+        driverName: currentDriverName || '진단사',
+      });
+      Alert.alert('수락 완료', '내 예약 목록으로 이동합니다.');
+      setActiveTab('upcoming');
+      fetchData();
+    } catch { Alert.alert('오류', '라운딩 수락에 실패했습니다.'); }
+    finally { setRoundingSaving(false); }
   };
 
   const openContactEdit = (item: DiagnosisItem) => {
@@ -651,6 +690,17 @@ export default function DiagnosisManagement() {
 
   const renderButtons = (item: DiagnosisItem) => {
     if (activeTab === 'request') {
+      if (item.status !== 'PENDING' && item.roundingRequested) {
+        return (
+          <TouchableOpacity
+            style={[styles.mainBtn, { backgroundColor: theme.accent }]}
+            disabled={roundingSaving}
+            onPress={() => handleAcceptRounding(item)}
+          >
+            <Text style={{ color: '#fff', fontWeight: 'bold' }}>라운딩 수락하기</Text>
+          </TouchableOpacity>
+        );
+      }
       return (
         <View style={{ gap: 8 }}>
           <TouchableOpacity style={[styles.mainBtn, { backgroundColor: theme.accent }]} onPress={() => handleClaim(Number(item.id))}>
@@ -996,6 +1046,19 @@ export default function DiagnosisManagement() {
                 <Ionicons name="document-text-outline" size={22} color={theme.accent} />
                 <Text style={[styles.contactOptionText, { color: theme.textMain }]}>요청사항 확인</Text>
               </TouchableOpacity>
+              {driverTier === 'general' && !moreOptionsItem?.roundingRequested && (
+                <TouchableOpacity
+                  style={styles.contactOption}
+                  onPress={() => {
+                    const item = moreOptionsItem!;
+                    setMoreOptionsItem(null);
+                    setTimeout(() => handleRequestRounding(item), 300);
+                  }}
+                >
+                  <Ionicons name="people-outline" size={22} color={theme.accent} />
+                  <Text style={[styles.contactOptionText, { color: theme.textMain }]}>라운딩 요청</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={[styles.contactOption, { borderBottomWidth: 0 }]}
                 onPress={() => {
