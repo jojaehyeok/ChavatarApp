@@ -476,7 +476,9 @@ export default function DiagnosisManagement() {
         return item.status === 'COMPLETED' && isMy;
       });
       // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
-      filtered.sort((a, b) => (a.preferredDateTime || '').localeCompare(b.preferredDateTime || ''));
+      // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
+      const normalizeDt = (dt: string) => (dt || '').replace('T', ' ');
+      filtered.sort((a, b) => normalizeDt(a.preferredDateTime).localeCompare(normalizeDt(b.preferredDateTime)));
       setData(filtered);
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
