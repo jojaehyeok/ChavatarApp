@@ -857,6 +857,9 @@ export default function DiagnosisManagement() {
 
         <FlatList
           data={filteredData}
+          contentContainerStyle={
+            activeTab === 'upcoming' && filteredData.length > 0 ? { paddingBottom: 96 } : undefined
+          }
           renderItem={({ item }) => (
             <View style={[styles.card, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
               <View style={styles.cardHeader}>
