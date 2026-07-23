@@ -15,7 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -66,9 +66,14 @@ const _G = {
   onClassified: null as unknown as
     | ((from: string, to: string, label: string) => void)
     | undefined,
+  onFailed: null as unknown as ((task: _UploadTask) => void) | undefined,
 };
 
-const _runTask = async (task: _UploadTask) => {
+const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// 현장 네트워크가 불안정할 수 있어 업로드 실패 시 3회까지 재시도한다.
+// 그래도 실패하면 조용히 사라지지 않고 onFailed로 알려서 UI에서 재시도할 수 있게 한다.
+const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
   const formData = new FormData();
   // @ts-ignore
   formData.append("file", {
@@ -84,29 +89,14 @@ const _runTask = async (task: _UploadTask) => {
       method: "POST",
       body: formData,
     });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error(`upload failed: ${res.status}`);
     const data = await res.json();
     const s3url: string = data.url;
-    if (!s3url) return;
+    if (!s3url) throw new Error("no url in response");
 
-    let finalCat = task.categoryId;
-    if (!SINGLE_IMG_CATS.includes(task.categoryId)) {
-      try {
-        const classRes = await fetch(`${API_BASE_URL}/classify/photo`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageUrl: s3url }),
-        });
-        if (classRes.ok) {
-          const { category, label } = await classRes.json();
-          // 단일 이미지 카테고리(계기판/등록증/보험이력)로 분류되면 무시
-          if (category && category !== task.categoryId && !SINGLE_IMG_CATS.includes(category)) {
-            finalCat = category;
-            _G.onClassified?.(task.categoryId, category, label);
-          }
-        }
-      } catch (_) {}
-    }
+    // 평가사가 순서대로 촬영한 걸 개수 기준으로 미리 배정한 카테고리를 그대로 신뢰한다.
+    // 현장 업로드 속도가 우선이라 사진마다 AI 분석을 태우지 않는다(대역폭 경쟁 방지).
+    const finalCat = task.categoryId;
 
     _G.onResult?.(task.uri, s3url, finalCat);
     if (_G.submittedId === task.requestId) {
@@ -116,11 +106,17 @@ const _runTask = async (task: _UploadTask) => {
         body: JSON.stringify({ category: finalCat, url: s3url }),
       }).catch(() => {});
     }
-  } catch (_e) {}
+  } catch (_e) {
+    if (attempt < 3) {
+      await _sleep(1500 * attempt);
+      return _runTask(task, attempt + 1);
+    }
+    _G.onFailed?.(task);
+  }
 };
 
 const _processQueue = () => {
-  while (_G.active < 3 && _G.queue.length > 0) {
+  while (_G.active < 5 && _G.queue.length > 0) {
     const task = _G.queue.shift()!;
     _G.active++;
     _runTask(task).finally(() => {
@@ -163,6 +159,40 @@ const CATEGORIES = [
   { id: "damage", label: "외판 데미지", min: 1 },
 ];
 
+// 진단평가사가 촬영하는 순서(외관→실내→휠&타이어→옵션→엔진룸→하부/기타누유) 그대로
+// 개수 기준으로 카테고리를 배정한다. 정해진 개수를 넘어가는 사진은 전부 외판 데미지로 간다.
+// AI 분류는 이 배정을 덮어쓰지 않고, 실제와 다를 때 피드백으로만 쌓인다(_runTask 참고).
+const POOL_SEQUENCE: { id: string; count: number }[] = [
+  { id: "exterior", count: 6 },
+  { id: "wheel", count: 8 },
+  { id: "interior", count: 10 },
+  { id: "extra", count: 10 },
+  { id: "engine", count: 1 },
+  { id: "undercarriage", count: 10 },
+];
+const POOL_CATEGORY_IDS = [...POOL_SEQUENCE.map((s) => s.id), "damage"];
+
+const categoryForPosition = (pos: number): string => {
+  let acc = 0;
+  for (const seg of POOL_SEQUENCE) {
+    acc += seg.count;
+    if (pos <= acc) return seg.id;
+  }
+  return "damage";
+};
+
+// 이미 올라간 풀 사진 개수(전 카테고리 합) 기준으로 이번에 추가되는 사진들의 카테고리를 순서대로 배정
+const assignPoolCategories = (
+  images: { [key: string]: string[] },
+  newUris: string[],
+): string[] => {
+  const already = POOL_CATEGORY_IDS.reduce(
+    (sum, id) => sum + (images[id]?.length || 0),
+    0,
+  );
+  return newUris.map((_, i) => categoryForPosition(already + i + 1));
+};
+
 // ─── 타입 ─────────────────────────────────────────────────────────────────────
 type MirrorMarkers = {
   driverCover: string[];
@@ -184,15 +214,30 @@ const onlyS3 = (urls: string[]) =>
 
 // ─── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function CarEvaluationSheet() {
-  const { requestId, carNumber, carModel, serviceType, mode, adminRequest } =
+  const { requestId, carNumber: carNumberParam, carModel: carModelParam, serviceType, mode, adminRequest } =
     useLocalSearchParams();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // 간편신청(B2B)에서 "미정"으로 접수된 차량번호/차주 성함을 평가사가 현장에서 알게 되면
+  // 여기서 바로 고칠 수 있게 한다 — 로컬 상태로 시작해서 이후 모든 곳(업로드/제출 등)에
+  // 이 값을 그대로 쓰도록 route param을 초기값으로만 쓰는 로컬 state로 바꿨다.
+  const [carNumber, setCarNumber] = useState(String(carNumberParam || ""));
+  const [carOwner, setCarOwner] = useState("");
+  const [carModel, setCarModel] = useState(String(carModelParam || ""));
+  const [carEditVisible, setCarEditVisible] = useState(false);
+  const [carEditNumber, setCarEditNumber] = useState("");
+  const [carEditOwner, setCarEditOwner] = useState("");
+  const [carEditModel, setCarEditModel] = useState("");
+  const [savingCarInfo, setSavingCarInfo] = useState(false);
 
   // serviceType: 'INSPECTION_DELIVERY' | 'EVALUATION_DELIVERY'
   const isInspection = serviceType === "INSPECTION_DELIVERY";
   const isEditMode = mode === "edit";
   const isViewMode = mode === "view";
+  // 연습 모드 — 평가사가 실제 진단 화면 흐름을 미리 익혀볼 수 있게 하되,
+  // 서버에는 아무것도 저장/업로드하지 않는다(사진도 실제 S3에 안 올라감).
+  const isPractice = mode === "practice";
   const STORAGE_KEY = `evaluation_data_${requestId}`;
 
   // ── 기본 정보 ────────────────────────────────────────────────────────────
@@ -273,16 +318,105 @@ export default function CarEvaluationSheet() {
 
   // ── 업로드 카운트 (전역 싱글톤 연동) ────────────────────────────────────
   const [uploadPending, setUploadPending] = useState(0);
+  const [failedUploads, setFailedUploads] = useState<{ uri: string; categoryId: string }[]>([]);
+  const [poolVisible, setPoolVisible] = useState(24); // 60장이면 화면에 60개 Image를 동시에 그려서 버벅이므로 페이지네이션
   const [aiToast, setAiToast] = useState<string | null>(null);
   const aiToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [poolVisible, setPoolVisible] = useState(20); // 초기 20장만 렌더
   const [feedbackTarget, setFeedbackTarget] = useState<{ uri: string; catId: string; catIdx: number } | null>(null);
+
+  // ─── 차량번호/차주 성함/차량명 수정 ("미정"으로 접수된 건 현장에서 알게 되면 채워넣기) ──
+  const openCarEdit = () => {
+    setCarEditNumber(carNumber);
+    setCarEditOwner(carOwner);
+    setCarEditModel(carModel);
+    setCarEditVisible(true);
+  };
+
+  const saveCarInfo = async () => {
+    const nextNumber = carEditNumber.trim();
+    if (!nextNumber) {
+      Alert.alert("알림", "차량번호를 입력해주세요.");
+      return;
+    }
+    const nextOwner = carEditOwner.trim() || "미정";
+    const nextModel = carEditModel.trim();
+    if (isPractice) {
+      setCarNumber(nextNumber);
+      setCarOwner(nextOwner);
+      setCarModel(nextModel);
+      setCarEditVisible(false);
+      return;
+    }
+    setSavingCarInfo(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/external/request/${requestId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ carNumber: nextNumber, carOwner: nextOwner, carModel: nextModel || null }),
+      });
+      if (!res.ok) throw new Error("저장 실패");
+      setCarNumber(nextNumber);
+      setCarOwner(nextOwner);
+      setCarModel(nextModel);
+      setCarEditVisible(false);
+    } catch (e) {
+      Alert.alert("오류", "차량정보 저장 중 문제가 발생했습니다.");
+    } finally {
+      setSavingCarInfo(false);
+    }
+  };
 
   // 로컬 URI → S3 교체 후 피드백 전송 대기 큐
   // { localUri, aiCategory, correctCategory }
   const pendingFeedbacks = useRef<{ localUri: string; aiCategory: string; correctCategory: string }[]>([]);
 
+  // 60장 업로드 중엔 완료 콜백이 초당 여러 번 튀는데, 매번 setImages/setUploadPending로
+  // 전체(3000줄) 폼을 리렌더하면 체크박스/토글 탭 반응이 버벅인다.
+  // 결과를 모아뒀다가 350ms마다 한 번씩만 상태를 갱신한다(업로드 자체 속도는 그대로).
+  const pendingResults = useRef<{ uri: string; s3url: string; cat: string }[]>([]);
+  const resultFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestUploadCount = useRef(0);
+  const countFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
+    // 모아둔 완료 결과를 한 번에 반영 — 업로드 여러 장이 거의 동시에 끝나도
+    // setImages/setExtraPhotos 호출은 최대 350ms에 한 번으로 묶는다.
+    const flushResults = () => {
+      resultFlushTimer.current = null;
+      const batch = pendingResults.current;
+      pendingResults.current = [];
+      if (batch.length === 0) return;
+
+      const extraMemoBatch = batch.filter((b) => b.cat === "extra_memo");
+      const normalBatch = batch.filter((b) => b.cat !== "extra_memo");
+
+      if (extraMemoBatch.length > 0) {
+        setExtraPhotos((prev) => {
+          let next = prev;
+          extraMemoBatch.forEach(({ uri, s3url }) => {
+            next = next.map((img) => (img === uri ? s3url : img));
+          });
+          return next;
+        });
+      }
+      if (normalBatch.length > 0) {
+        setImages((prev) => {
+          const updated = { ...prev };
+          normalBatch.forEach(({ uri, s3url, cat }) => {
+            // 모든 카테고리에서 로컬 URI 제거 (AI가 카테고리 바꿔도 원본 제거)
+            for (const key of Object.keys(updated)) {
+              if (updated[key].includes(uri)) {
+                updated[key] = updated[key].filter((img) => img !== uri);
+              }
+            }
+            // 최종 카테고리에 S3 URL 추가
+            updated[cat] = [...(updated[cat] || []), s3url];
+          });
+          return updated;
+        });
+      }
+    };
+
     // 컴포넌트 마운트: 콜백 등록
     _G.onResult = (uri, s3url, cat) => {
       // 업로드 완료 시 대기 중인 피드백 있으면 전송
@@ -296,41 +430,74 @@ export default function CarEvaluationSheet() {
       });
       pendingFeedbacks.current = pendingFeedbacks.current.filter(f => f.localUri !== uri);
 
-      if (cat === "extra_memo") {
-        setExtraPhotos((prev) =>
-          prev.map((img) => (img === uri ? s3url : img)),
-        );
-      } else {
-        setImages((prev) => {
-          const updated = { ...prev };
-          // 모든 카테고리에서 로컬 URI 제거 (AI가 카테고리 바꿔도 원본 제거)
-          for (const key of Object.keys(updated)) {
-            if (updated[key].includes(uri)) {
-              updated[key] = updated[key].filter((img) => img !== uri);
-            }
-          }
-          // 최종 카테고리에 S3 URL 추가
-          updated[cat] = [...(updated[cat] || []), s3url];
-          return updated;
-        });
+      pendingResults.current.push({ uri, s3url, cat });
+      if (!resultFlushTimer.current) {
+        resultFlushTimer.current = setTimeout(flushResults, 350);
       }
     };
-    _G.onCount = (n) => setUploadPending(n);
+    _G.onCount = (n) => {
+      latestUploadCount.current = n;
+      if (countFlushTimer.current) return;
+      countFlushTimer.current = setTimeout(() => {
+        countFlushTimer.current = null;
+        setUploadPending(latestUploadCount.current);
+      }, 350);
+    };
     _G.onClassified = (_from, _to, label) => {
       if (aiToastTimer.current) clearTimeout(aiToastTimer.current);
       setAiToast(`🤖 ${label}(으)로 자동분류됨`);
       aiToastTimer.current = setTimeout(() => setAiToast(null), 3000);
     };
+    // 3회 재시도 후에도 실패하면 조용히 사라지지 않고 재시도 버튼으로 노출한다
+    // (사진이 조용히 유실되는 것보다 눈에 보이는 실패가 훨씬 낫다).
+    _G.onFailed = (task) => {
+      if (task.categoryId === "extra_memo") {
+        setExtraPhotos((prev) => prev.filter((img) => img !== task.uri));
+      } else {
+        setImages((prev) => {
+          const updated = { ...prev };
+          for (const key of Object.keys(updated)) {
+            if (updated[key].includes(task.uri)) {
+              updated[key] = updated[key].filter((img) => img !== task.uri);
+            }
+          }
+          return updated;
+        });
+      }
+      setFailedUploads((prev) => [...prev, { uri: task.uri, categoryId: task.categoryId }]);
+    };
     return () => {
       // 언마운트 후에도 업로드는 계속, UI 콜백만 해제
+      if (resultFlushTimer.current) clearTimeout(resultFlushTimer.current);
+      if (countFlushTimer.current) clearTimeout(countFlushTimer.current);
       _G.onResult = undefined;
       _G.onCount = undefined;
       _G.onClassified = undefined;
+      _G.onFailed = undefined;
     };
   }, []);
 
+  // 3회 재시도 후에도 실패한 사진들을 한 번에 다시 큐에 올린다
+  const handleRetryFailed = () => {
+    const toRetry = failedUploads;
+    setFailedUploads([]);
+    toRetry.forEach((f) => {
+      if (f.categoryId !== "extra_memo") {
+        setImages((prev) => ({
+          ...prev,
+          [f.categoryId]: [...(prev[f.categoryId] || []), f.uri],
+        }));
+      } else {
+        setExtraPhotos((prev) => [...prev, f.uri]);
+      }
+      enqueueUpload(f.uri, f.categoryId);
+    });
+  };
+
   // uploadUri: fetch에 쓸 URI, displayUri: state에 저장된 표시용 URI (생략 시 uploadUri와 동일)
   const enqueueUpload = (uri: string, categoryId: string) => {
+    // 연습 모드는 사진을 실제 서버(S3)에 올리지 않는다 — 로컬에 이미 표시된 상태로 끝
+    if (isPractice) return;
     globalEnqueue({
       uri,
       categoryId,
@@ -554,6 +721,7 @@ export default function CarEvaluationSheet() {
     driveDesc,
     mirrorMarkers,
     checkedDamages,
+    extraPhotos,
     // memo는 onBlur 시에만 저장 (타이핑 중 re-render/AsyncStorage 방지)
   ]);
 
@@ -589,6 +757,7 @@ export default function CarEvaluationSheet() {
         memo,
         mirrorMarkers,
         checkedDamages,
+        extraPhotos,
       };
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
@@ -639,6 +808,7 @@ export default function CarEvaluationSheet() {
         setOptionsDesc(p.optionsDesc || "");
         setDriveDesc(p.driveDesc || "");
         setMemo(p.memo || "");
+        setExtraPhotos(p.extraPhotos || []);
         setMirrorMarkers(
           p.mirrorMarkers || {
             driverCover: [],
@@ -704,6 +874,15 @@ export default function CarEvaluationSheet() {
         );
         return;
       }
+      if (
+        !isPractice &&
+        (!dashboardImage.startsWith("http") ||
+          !regImage.startsWith("http") ||
+          !vinImage.startsWith("http"))
+      ) {
+        Alert.alert("업로드 중", "기본사진이 아직 업로드 중입니다. 잠시만 기다려주세요.");
+        return;
+      }
       setEvaluationStarted(true);
       return;
     }
@@ -715,6 +894,27 @@ export default function CarEvaluationSheet() {
     }
     if (isInspection && !repairCost) {
       Alert.alert("알림", "예상 복구비용을 입력해주세요.");
+      return;
+    }
+    if (uploadPending > 0) {
+      Alert.alert(
+        "업로드 중",
+        `아직 사진 ${uploadPending}장이 업로드 중입니다. 완료될 때까지 잠시만 기다려주세요.`,
+      );
+      return;
+    }
+
+    // 연습 모드는 여기서 끝 — 서버에 아무것도 보내지 않고, 다음 연습을 위해 로컬 임시저장도 지운다
+    if (isPractice) {
+      Alert.alert("연습 완료", "연습 모드입니다 — 실제로 저장되지 않았습니다.", [
+        {
+          text: "확인",
+          onPress: () => {
+            AsyncStorage.removeItem(STORAGE_KEY);
+            router.back();
+          },
+        },
+      ]);
       return;
     }
 
@@ -891,7 +1091,13 @@ export default function CarEvaluationSheet() {
   const SINGLE_IMG_CATS = ["dashboard", "registration", "vin"];
 
   const confirmPickerSelection = () => {
-    const selectedList = pickerAssets.filter((a) => pickerSelected.has(a.id));
+    // creationTime 정렬은 같은 초에 연속 촬영하면 순서가 꼬인다(초 단위 정밀도 충돌).
+    // 평가사가 화면에서 탭한 순서(pickerSelected Set의 삽입 순서)를 그대로 신뢰한다 —
+    // 어떤 순서로 찍었든 탭한 순서대로 카테고리가 배정된다.
+    const assetById = new Map(pickerAssets.map((a) => [a.id, a]));
+    const selectedList = Array.from(pickerSelected)
+      .map((id) => assetById.get(id))
+      .filter((a): a is MediaLibrary.Asset => !!a);
     const categorySnapshot = pickerCategoryId;
     const uris = selectedList.map((a) => a.uri);
 
@@ -909,6 +1115,19 @@ export default function CarEvaluationSheet() {
       else if (categorySnapshot === "registration") setRegImage(uri);
       else if (categorySnapshot === "vin") setVinImage(uri);
       uploadSingleImage(uri, categorySnapshot);
+    } else if (categorySnapshot === "exterior") {
+      // 풀(기본 사진)의 단일 "사진추가" 버튼은 항상 "exterior"로 들어온다 —
+      // 실제 카테고리는 지금까지 쌓인 개수를 기준으로 순서대로 배정한다.
+      const assigned = assignPoolCategories(images, uris);
+      setImages((prev) => {
+        const next = { ...prev };
+        uris.forEach((uri, i) => {
+          const cat = assigned[i];
+          next[cat] = [...(next[cat] || []), uri];
+        });
+        return next;
+      });
+      uris.forEach((uri, i) => enqueueUpload(uri, assigned[i]));
     } else {
       setImages((prev) => ({
         ...prev,
@@ -993,6 +1212,18 @@ export default function CarEvaluationSheet() {
 
           // 서버 업로드 실행
           uploadSingleImage(uri, categoryId);
+        } else if (categoryId === "exterior") {
+          // 풀(기본 사진)의 단일 진입점 — 지금까지 쌓인 개수 기준으로 순서대로 배정
+          const assigned = assignPoolCategories(images, newUris);
+          setImages((prev) => {
+            const next = { ...prev };
+            newUris.forEach((uri, i) => {
+              const cat = assigned[i];
+              next[cat] = [...(next[cat] || []), uri];
+            });
+            return next;
+          });
+          newUris.forEach((uri, i) => enqueueUpload(uri, assigned[i]));
         } else {
           // 화면 표시용 (로컬 경로들 추가)
           setImages((prev) => ({
@@ -1010,7 +1241,16 @@ export default function CarEvaluationSheet() {
     }
   };
 
-  const uploadSingleImage = async (uri: string, categoryId: string) => {
+  const SINGLE_CAT_LABEL: Record<string, string> = {
+    dashboard: "계기판",
+    registration: "자동차등록증",
+    vin: "보험이력",
+  };
+
+  // 현장 네트워크가 불안정할 수 있어 3회까지 재시도 — 그래도 실패하면 무한 로딩 대신
+  // 명확히 알리고 다시 눌러서 재업로드하도록 안내한다(기본사진은 진단 시작을 막는 필수값).
+  const uploadSingleImage = async (uri: string, categoryId: string, attempt = 1) => {
+    if (isPractice) return; // 연습 모드는 서버 업로드 없이 로컬 미리보기로 끝
     try {
       const formData = new FormData();
       const fileName = `photo_${Date.now()}.jpg`;
@@ -1025,7 +1265,7 @@ export default function CarEvaluationSheet() {
       formData.append("category", categoryId);
       formData.append("carNumber", String(carNumber || "미등록"));
 
-      console.log(`[단일] ${categoryId} 업로드 시작...`);
+      console.log(`[단일] ${categoryId} 업로드 시작... (시도 ${attempt})`);
 
       const res = await fetch(`${API_BASE_URL}/external/inspection/upload`, {
         method: "POST",
@@ -1039,7 +1279,7 @@ export default function CarEvaluationSheet() {
       if (!res.ok) {
         const errorDetail = await res.text();
         console.error("❌ 서버 에러 상세:", errorDetail);
-        return;
+        throw new Error(`upload failed: ${res.status}`);
       }
 
       const result = await res.json();
@@ -1052,6 +1292,14 @@ export default function CarEvaluationSheet() {
       }
     } catch (e) {
       console.error("🔥 Upload Error (Single):", e);
+      if (attempt < 3) {
+        setTimeout(() => uploadSingleImage(uri, categoryId, attempt + 1), 1500 * attempt);
+      } else {
+        Alert.alert(
+          "업로드 실패",
+          `${SINGLE_CAT_LABEL[categoryId] ?? "사진"} 업로드에 실패했습니다. 네트워크 상태를 확인하고 해당 사진을 다시 눌러 재업로드해주세요.`,
+        );
+      }
     }
   };
 
@@ -1086,6 +1334,83 @@ export default function CarEvaluationSheet() {
     } catch (e) {
       Alert.alert("오류", "네트워크 연결을 확인해주세요.");
     }
+  };
+
+  // 매번 새 함수를 만들면 React.memo(CarEvaluationDamageChecker)가 무력화되어
+  // 타이핑/백그라운드 업로드 때마다 SVG+37개 터치영역이 통째로 다시 그려진다.
+  const handleDamageChange = useCallback((index: number, symbols: string[]) => {
+    setCheckedDamages((prev) => {
+      const next = [...prev];
+      next[index] = symbols;
+      return next;
+    });
+  }, []);
+
+  // ─── 대표(첫번째) 사진 지정 — 길게 누르면 해당 카테고리 맨 앞으로 이동 ─────
+  // 드래그 재정렬은 사진이 많을 때(40장+) 애니메이션 렉이 심해서 대신 이 방식으로 처리한다.
+  // 경매 목록 썸네일은 exterior[0]을 쓰므로, 외관 사진 중 하나를 꾹 눌러
+  // 대표사진으로 지정하면 그 사진이 경매 카드 대표 이미지가 된다.
+  const handleSetAsCover = (catId: string, idx: number) => {
+    if (idx === 0) return;
+    Alert.alert(
+      "대표 사진으로 설정",
+      "이 사진을 해당 카테고리의 첫 번째 사진으로 옮깁니다. 경매 목록 대표 이미지는 외관 첫 번째 사진이 쓰입니다.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "설정",
+          onPress: () => {
+            setImages((prev) => {
+              const list = [...(prev[catId] || [])];
+              if (idx >= list.length) return prev;
+              const [picked] = list.splice(idx, 1);
+              list.unshift(picked);
+              return { ...prev, [catId]: list };
+            });
+          },
+        },
+      ],
+    );
+  };
+
+  // ─── 기본 사진 풀 초기화 (전체 삭제) ─────────────────────────────────────
+  const handleResetPool = () => {
+    const total = POOL_CATEGORY_IDS.reduce(
+      (sum, id) => sum + (images[id]?.length || 0),
+      0,
+    );
+    if (total === 0) return;
+    Alert.alert(
+      "기본 사진 초기화",
+      `기본 사진 ${total}장을 전부 삭제합니다. 되돌릴 수 없습니다.`,
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "전체 삭제",
+          style: "destructive",
+          onPress: async () => {
+            const urls = POOL_CATEGORY_IDS.flatMap(
+              (id) => images[id] || [],
+            ).filter((url) => url.startsWith("http"));
+            await Promise.all(
+              urls.map((url) =>
+                fetch(
+                  `${API_BASE_URL}/external/inspection/upload?url=${encodeURIComponent(url)}`,
+                  { method: "DELETE" },
+                ).catch(() => {}),
+              ),
+            );
+            setImages((prev) => {
+              const next = { ...prev };
+              POOL_CATEGORY_IDS.forEach((id) => {
+                next[id] = [];
+              });
+              return next;
+            });
+          },
+        },
+      ],
+    );
   };
 
   // ─── 이미지 뷰어 ──────────────────────────────────────────────────────────
@@ -1286,7 +1611,11 @@ export default function CarEvaluationSheet() {
         <View style={styles.navHeader}>
           <TouchableOpacity
             onPress={() => {
-              if (!isViewMode && evaluationStarted) {
+              if (isPractice) {
+                // 연습 모드는 저장할 게 없으니 묻지 않고, 지금까지의 임시저장도 지운다
+                AsyncStorage.removeItem(STORAGE_KEY);
+                router.back();
+              } else if (!isViewMode && evaluationStarted) {
                 Alert.alert("뒤로 가기", "임시저장 후 나가시겠습니까?", [
                   {
                     text: "저장 후 나가기",
@@ -1629,10 +1958,95 @@ export default function CarEvaluationSheet() {
         >
           <ScrollView style={styles.container} bounces={false}>
             {/* 차량 정보 바 */}
-            <View style={styles.carSummaryBar}>
-              <Text style={styles.carNumText}>{carNumber || "차량번호"}</Text>
-              <Text style={styles.carModelText}>{carModel || "차량모델"}</Text>
+            <View style={[styles.carSummaryBar, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
+              <View>
+                <Text style={styles.carNumText}>{carNumber || "차량번호"}</Text>
+                <Text style={styles.carModelText}>
+                  {carModel || "차량모델"}{carOwner ? ` · 차주 ${carOwner}` : ""}
+                </Text>
+              </View>
+              {!isViewMode && (
+                <TouchableOpacity onPress={openCarEdit} style={{ padding: 8 }}>
+                  <Ionicons name="pencil" size={18} color="#888" />
+                </TouchableOpacity>
+              )}
             </View>
+
+            {carEditVisible && (
+              <Modal transparent animationType="fade" onRequestClose={() => setCarEditVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }}>
+                  <View style={{ backgroundColor: "#181818", borderRadius: 16, padding: 20 }}>
+                    <Text style={{ color: "#fff", fontSize: 16, fontWeight: "bold", marginBottom: 16 }}>
+                      차량정보 수정
+                    </Text>
+                    <Text style={{ color: "#888", fontSize: 12, marginBottom: 6 }}>차량번호</Text>
+                    <TextInput
+                      value={carEditNumber}
+                      onChangeText={setCarEditNumber}
+                      placeholder="차량번호"
+                      placeholderTextColor="#555"
+                      style={{ backgroundColor: "#000", color: "#fff", borderRadius: 8, padding: 10, marginBottom: 14 }}
+                    />
+                    <Text style={{ color: "#888", fontSize: 12, marginBottom: 6 }}>차주 성함</Text>
+                    <TextInput
+                      value={carEditOwner}
+                      onChangeText={setCarEditOwner}
+                      placeholder="차주 성함"
+                      placeholderTextColor="#555"
+                      style={{ backgroundColor: "#000", color: "#fff", borderRadius: 8, padding: 10, marginBottom: 14 }}
+                    />
+                    <Text style={{ color: "#888", fontSize: 12, marginBottom: 6 }}>차량명</Text>
+                    <TextInput
+                      value={carEditModel}
+                      onChangeText={setCarEditModel}
+                      placeholder="예: 그랜저 IG"
+                      placeholderTextColor="#555"
+                      style={{ backgroundColor: "#000", color: "#fff", borderRadius: 8, padding: 10, marginBottom: 20 }}
+                    />
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => setCarEditVisible(false)}
+                        style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: "#333", alignItems: "center" }}
+                      >
+                        <Text style={{ color: "#fff", fontWeight: "600" }}>취소</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={saveCarInfo}
+                        disabled={savingCarInfo}
+                        style={{ flex: 1, padding: 12, borderRadius: 8, backgroundColor: "#fff", alignItems: "center", opacity: savingCarInfo ? 0.5 : 1 }}
+                      >
+                        {savingCarInfo ? <ActivityIndicator size="small" /> : <Text style={{ color: "#000", fontWeight: "700" }}>저장</Text>}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            {!isViewMode && failedUploads.length > 0 && (
+              <TouchableOpacity
+                onPress={handleRetryFailed}
+                style={{
+                  backgroundColor: "#3a1a1a",
+                  borderWidth: 1,
+                  borderColor: "#ff4d4d",
+                  borderRadius: 10,
+                  marginHorizontal: 20,
+                  marginTop: 12,
+                  padding: 12,
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <Text style={{ color: "#ff8080", fontSize: 13, fontWeight: "600" }}>
+                  ⚠️ {failedUploads.length}장 업로드 실패 (네트워크 확인)
+                </Text>
+                <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>
+                  🔄 재시도
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {/* ═══ 1. 기본 사진 ═══════════════════════════════════════════════ */}
             <View style={styles.sectionHeader}>
@@ -1888,16 +2302,7 @@ export default function CarEvaluationSheet() {
               {/* 손상 체크 */}
               <CarEvaluationDamageChecker
                 checkedDamages={checkedDamages}
-                onChange={
-                  isViewMode
-                    ? undefined
-                    : (index, symbols) =>
-                        setCheckedDamages((prev) => {
-                          const next = [...prev];
-                          next[index] = symbols;
-                          return next;
-                        })
-                }
+                onChange={isViewMode ? undefined : handleDamageChange}
               />
             </View>
 
@@ -2012,27 +2417,49 @@ export default function CarEvaluationSheet() {
 
             {useMemo(
               () => {
-                // 모든 카테고리 사진을 하나로 합쳐서 표시 (AI가 자동 분류)
+                // 촬영 순서(POOL_CATEGORY_IDS)와 같은 순서로 그룹핑 — CATEGORIES 원래 순서로 묶으면
+                // 실제 촬영 순서와 어긋나 화면에 뒤섞여 보인다.
                 const poolPhotos: { uri: string; catId: string; catIdx: number }[] = [];
-                for (const cat of CATEGORIES) {
-                  (images[cat.id] || []).forEach((uri, idx) => {
-                    poolPhotos.push({ uri, catId: cat.id, catIdx: idx });
+                for (const catId of POOL_CATEGORY_IDS) {
+                  (images[catId] || []).forEach((uri, idx) => {
+                    poolPhotos.push({ uri, catId, catIdx: idx });
                   });
                 }
-                // 업로드 중(로컬 URI) 사진은 항상 앞에, S3 사진은 페이지네이션
-                const uploading = poolPhotos.filter(p => !p.uri.startsWith("http"));
-                const uploaded  = poolPhotos.filter(p =>  p.uri.startsWith("http"));
+                const uploading = poolPhotos.filter((p) => !p.uri.startsWith("http"));
+                const uploaded = poolPhotos.filter((p) => p.uri.startsWith("http"));
+                // 업로드 중인 사진은 항상 다 보여주고, 완료된 사진은 페이지네이션 —
+                // 60장을 한 번에 렌더링하면 Image 디코딩 때문에 스크롤이 버벅인다.
                 const visibleUploaded = uploaded.slice(0, Math.max(0, poolVisible - uploading.length));
                 const visible = [...uploading, ...visibleUploaded];
                 const hiddenCount = poolPhotos.length - visible.length;
                 const allUris = poolPhotos.map((p) => p.uri);
+                const badgeColors: Record<string, string> = {
+                  exterior: "#16a34a", interior: "#2563eb", wheel: "#d97706",
+                  engine: "#dc2626", undercarriage: "#7c3aed", damage: "#be123c", extra: "#475569",
+                };
 
                 return (
                   <View style={styles.catBox}>
                     {!isViewMode && (
-                      <Text style={[styles.catCountText, { marginBottom: 8 }]}>
-                        총 {poolPhotos.length}장 · AI가 자동 분류합니다
-                      </Text>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Text style={styles.catCountText}>
+                          총 {poolPhotos.length}장 · 순서대로 자동 분류됩니다{"\n"}사진을 꾹 누르면 대표사진으로 등록됩니다
+                        </Text>
+                        {poolPhotos.length > 0 && (
+                          <TouchableOpacity onPress={handleResetPool}>
+                            <Text style={{ color: "#ff4d4d", fontSize: 12, fontWeight: "600" }}>
+                              🗑 전체 초기화
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     )}
                     <View style={styles.photoGrid}>
                       {!isViewMode && (
@@ -2045,15 +2472,11 @@ export default function CarEvaluationSheet() {
                         </TouchableOpacity>
                       )}
                       {visible.map((photo) => {
-                        const isUploading = !photo.uri.startsWith("http");
+                        const isUploading = !isPractice && !photo.uri.startsWith("http");
                         const globalIdx = poolPhotos.findIndex(
-                          p => p.catId === photo.catId && p.catIdx === photo.catIdx
+                          (p) => p.catId === photo.catId && p.catIdx === photo.catIdx,
                         );
-                        const catInfo = CATEGORIES.find(c => c.id === photo.catId);
-                        const badgeColors: Record<string, string> = {
-                          exterior: "#16a34a", interior: "#2563eb", wheel: "#d97706",
-                          engine: "#dc2626", undercarriage: "#7c3aed", damage: "#be123c", extra: "#475569",
-                        };
+                        const catInfo = CATEGORIES.find((c) => c.id === photo.catId);
                         const badgeColor = badgeColors[photo.catId] ?? "#475569";
                         return (
                           <View
@@ -2064,6 +2487,10 @@ export default function CarEvaluationSheet() {
                               style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden" }}
                               activeOpacity={0.85}
                               onPress={() => openViewer(allUris, globalIdx)}
+                              onLongPress={() =>
+                                !isViewMode && !isUploading &&
+                                handleSetAsCover(photo.catId, photo.catIdx)
+                              }
                             >
                               <Image
                                 source={{ uri: photo.uri }}
@@ -2078,7 +2505,6 @@ export default function CarEvaluationSheet() {
                                 </View>
                               )}
                             </TouchableOpacity>
-                            {/* 카테고리 배지 - 탭하면 수정 가능 */}
                             {catInfo && !isUploading && (
                               <TouchableOpacity
                                 style={[styles.catBadge, { backgroundColor: badgeColor }]}
@@ -2103,7 +2529,7 @@ export default function CarEvaluationSheet() {
                     {hiddenCount > 0 && (
                       <TouchableOpacity
                         style={styles.loadMoreBtn}
-                        onPress={() => setPoolVisible(v => v + 20)}
+                        onPress={() => setPoolVisible((v) => v + 24)}
                       >
                         <Text style={styles.loadMoreText}>
                           사진 더 보기 ({hiddenCount}장 남음)
@@ -2120,6 +2546,8 @@ export default function CarEvaluationSheet() {
                 openCustomPicker,
                 openViewer,
                 handleDeleteImage,
+                handleResetPool,
+                handleSetAsCover,
               ],
             )}
 

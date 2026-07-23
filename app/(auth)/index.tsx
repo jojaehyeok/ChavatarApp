@@ -25,8 +25,31 @@ export default function LoadingLoginScreen() {
                 const driverName = await AsyncStorage.getItem('driverName');
 
                 if (driverId && driverName) {
-                    // 기록이 있으면 바로 메인(tabs)으로 이동
-                    router.replace('/(tabs)');
+                    // 관리자가 계정을 삭제/거절해도 로컬에 로그인 기록만 남아있으면
+                    // 그동안 계속 자동 로그인됐음 — 서버에 계정이 아직 있고 APPROVED 상태인지 재확인한다.
+                    // (존재 여부만 보면, 로그인해서 앱 켜놓은 채로 거절당해도 로그인 화면에서
+                    // 다시 앱을 켤 때마다 그대로 자동 로그인돼서 정책 위반으로 거절한 의미가 없어짐)
+                    let stillValid = true;
+                    let rejected = false;
+                    try {
+                        const res = await fetch(`${API_BASE_URL}/drivers/${driverId}`);
+                        const driver = res.ok ? await res.json() : null;
+                        stillValid = !!(driver && driver.id && driver.status === 'APPROVED');
+                        rejected = !!(driver && driver.status === 'REJECTED');
+                    } catch (checkError) {
+                        // 네트워크 오류 등 확인 자체가 실패한 경우는 로그아웃시키지 않고 기존처럼 진행
+                        console.error("계정 유효성 확인 실패", checkError);
+                        stillValid = true;
+                    }
+
+                    if (stillValid) {
+                        router.replace('/(tabs)');
+                    } else {
+                        await AsyncStorage.multiRemove(['driverId', 'driverUsername', 'driverName']);
+                        if (rejected) {
+                            Alert.alert('알림', '가입 신청이 거절되었습니다. 사유는 고객센터로 문의주세요.');
+                        }
+                    }
                 }
             } catch (e) {
                 console.error("로그인 상태 체크 실패", e);

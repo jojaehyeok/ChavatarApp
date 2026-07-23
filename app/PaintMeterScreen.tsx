@@ -16,6 +16,7 @@ import {
   PermissionsAndroid,
   Platform,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -396,6 +397,7 @@ export default function PaintMeterScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
+      <StatusBar barStyle="light-content" />
       {/* 헤더 */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>

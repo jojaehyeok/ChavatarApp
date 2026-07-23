@@ -3,6 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import Constants from 'expo-constants';
 import { useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
+import * as Location from 'expo-location';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -18,7 +21,9 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   useColorScheme,
   View,
@@ -51,6 +56,18 @@ const AM_TIMES = ['08:00', '09:00', '10:00', '11:00'];
 const PM_TIMES = ['12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
 const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
+function formatPhone(raw?: string | null): string {
+  if (!raw) return '';
+  const digits = raw.replace(/[^0-9]/g, '');
+  if (digits.length === 11) return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) {
+    return digits.startsWith('02')
+      ? `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`
+      : `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  return raw;
+}
+
 const toYMD = (d: Date) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -79,7 +96,9 @@ interface DiagnosisItem {
   carOwner: string;
   carNumber: string;
   carModel?: string;
+  dealerName?: string | null;
   contact?: string;
+  customerContact?: string | null;
   address: string;
   detailAddress: string;
   preferredDateTime: string;
@@ -145,6 +164,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
           height: 72,
           minHeight: 72,
           maxHeight: 72,
+          backgroundColor: theme.background,
         },
       ]}
       contentContainerStyle={{
@@ -160,6 +180,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
         style={[
           styles.dateChip,
           styles.dateChipFixed,
+          { backgroundColor: theme.card },
           filterDate === 'all' && selectedShadow,
         ]}
         onPress={() => onSelect('all')}
@@ -187,6 +208,7 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
             style={[
               styles.dateChip,
               styles.dateChipFixed,
+              { backgroundColor: theme.card },
               isSelected && selectedShadow,
             ]}
             onPress={() => onSelect(ymd)}
@@ -269,6 +291,9 @@ export default function DiagnosisManagement() {
 
   const [currentDriverId, setCurrentDriverId] = useState<string | null>(null);
   const [currentDriverName, setCurrentDriverName] = useState<string | null>(null);
+  // 근무시간(스케줄) 안이라도 원거리 이동 등으로 잠깐 자동배정·신규접수 알림에서 빠지고 싶을 때 끄는 스위치
+  const [isActiveOn, setIsActiveOn] = useState(true);
+  const [togglingActive, setTogglingActive] = useState(false);
 
   const [filterDate, setFilterDate] = useState<string>('all');
 
@@ -279,20 +304,70 @@ export default function DiagnosisManagement() {
 
   const [moreOptionsItem, setMoreOptionsItem] = useState<DiagnosisItem | null>(null);
   const [cancelItem, setCancelItem] = useState<DiagnosisItem | null>(null);
+  const [contactEditItem, setContactEditItem] = useState<DiagnosisItem | null>(null);
+  const [contactEditValue, setContactEditValue] = useState('');
+  const [contactSaving, setContactSaving] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
   const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
 
+  // 근무시간(스케줄) 안이라도 원거리 이동 등으로 잠깐 자동배정·신규접수 알림에서 빠지고 싶을 때 끄는 스위치
+  const handleToggleActive = useCallback(async () => {
+    if (!currentDriverId || togglingActive) return;
+    const next = !isActiveOn;
+    setTogglingActive(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/drivers/${currentDriverId}/active-status`, { isActive: next });
+      setIsActiveOn(next);
+
+      // 위치는 2분 간격 타이머로만 갱신돼서, 활동정지로 오래 있다가 다시 켜면 그 사이 위치가
+      // 묵어있을 수 있음 — 활동중으로 켤 때는 즉시 한 번 현재 위치를 갱신해준다.
+      if (next) {
+        try {
+          const { status: perm } = await Location.getForegroundPermissionsAsync();
+          if (perm === 'granted') {
+            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            await axios.patch(`${API_BASE_URL}/drivers/${currentDriverId}/location`, {
+              lat: loc.coords.latitude,
+              lng: loc.coords.longitude,
+            });
+          }
+        } catch (locErr) {
+          console.log('[활동중 전환] 위치 즉시갱신 실패', locErr);
+        }
+      }
+    } catch (e) {
+      Alert.alert('오류', '활동 상태 변경에 실패했습니다.');
+    } finally {
+      setTogglingActive(false);
+    }
+  }, [currentDriverId, isActiveOn, togglingActive]);
+
   useEffect(() => {
     navigation.setOptions({
       headerRight: () => (
-        <TouchableOpacity onPress={openDrawer} style={{ paddingHorizontal: 12, paddingVertical: 6 }}>
-          <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 4 }}>
+            <Switch
+              value={isActiveOn}
+              onValueChange={handleToggleActive}
+              disabled={togglingActive}
+              trackColor={{ false: '#767577', true: '#22c55e' }}
+              thumbColor="#fff"
+              style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+            />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 2 }}>
+              {isActiveOn ? '활동중' : '활동중지'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={openDrawer} style={{ paddingHorizontal: 12, paddingVertical: 6 }}>
+            <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
       ),
     });
-  }, [navigation, openDrawer]);
+  }, [navigation, openDrawer, isActiveOn, togglingActive, handleToggleActive]);
 
   useEffect(() => {
     const getMyInfo = async () => {
@@ -303,6 +378,13 @@ export default function DiagnosisManagement() {
     };
     getMyInfo();
   }, []);
+
+  useEffect(() => {
+    if (!currentDriverId) return;
+    axios.get(`${API_BASE_URL}/drivers/${currentDriverId}`)
+      .then(res => { if (typeof res.data?.isActive === 'boolean') setIsActiveOn(res.data.isActive); })
+      .catch(() => {});
+  }, [currentDriverId]);
 
   useEffect(() => {
     if (!Notifications || !currentDriverId) return;
@@ -347,9 +429,14 @@ export default function DiagnosisManagement() {
     return data.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
   }, [data, activeTab, filterDate]);
 
-  const handleContact = async (type: 'tel' | 'sms' | 'confirm') => {
+  const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy') => {
     const rawContact = selectedItem?.contact;
     if (!rawContact) { Alert.alert('오류', '연락처 정보가 없습니다.'); return; }
+    if (type === 'copy') {
+      await Clipboard.setStringAsync(rawContact);
+      setContactModalVisible(false);
+      return;
+    }
     const phone = rawContact.replace(/[^0-9]/g, '');
     let url = type === 'tel' ? `tel:${phone}` : `sms:${phone}`;
     if (type === 'confirm') {
@@ -380,11 +467,16 @@ export default function DiagnosisManagement() {
       const allData: DiagnosisItem[] = Array.isArray(response.data) ? response.data : response.data.data;
       if (!allData) return;
       const filtered = allData.filter(item => {
+        // 자체 신청(source가 "self-"로 시작) 건은 발주사가 직접 처리하는 건이라
+        // 진단사가 방문할 필요가 없음 — 앱 어느 탭에도 노출하지 않음
+        if (item.source?.startsWith('self-')) return false;
         const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
         if (activeTab === 'request') return item.status === 'PENDING';
         if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
         return item.status === 'COMPLETED' && isMy;
       });
+      // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
+      filtered.sort((a, b) => (a.preferredDateTime || '').localeCompare(b.preferredDateTime || ''));
       setData(filtered);
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
@@ -429,6 +521,24 @@ export default function DiagnosisManagement() {
     } catch { Alert.alert('오류', '확정 실패'); }
   };
 
+  const openContactEdit = (item: DiagnosisItem) => {
+    setContactEditItem(item);
+    setContactEditValue(item.customerContact || '');
+  };
+
+  const handleContactSave = async () => {
+    if (!contactEditItem) return;
+    setContactSaving(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${contactEditItem.id}/status`, {
+        customerContact: contactEditValue.trim() || null,
+      });
+      setContactEditItem(null);
+      fetchData();
+    } catch { Alert.alert('오류', '고객 연락처 저장에 실패했습니다.'); }
+    finally { setContactSaving(false); }
+  };
+
   const handleCancel = async () => {
     if (!cancelItem || !cancelReason) return;
     setCancelling(true);
@@ -456,7 +566,29 @@ export default function DiagnosisManagement() {
     router.push({ pathname: '/KakaoMapScreen', params: { items: JSON.stringify(items) } } as any);
   }, [filteredData, router]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // 앱을 이미 켜놓고 사용 중인 도중에 관리자가 거절/삭제 처리해도 세션이 안 끊기는 문제 방지 —
+  // 탭 포커스마다 승인 상태를 재확인해서, 더 이상 APPROVED가 아니면 즉시 로그아웃시킨다.
+  const checkStillApproved = useCallback(async () => {
+    if (!currentDriverId) return;
+    try {
+      const res = await axios.get(`${API_BASE_URL}/drivers/${currentDriverId}`);
+      const driver = res.data;
+      if (driver?.status && driver.status !== 'APPROVED') {
+        await AsyncStorage.multiRemove(['driverId', 'driverUsername', 'driverName']);
+        Alert.alert(
+          '알림',
+          driver.status === 'REJECTED'
+            ? '가입 신청이 거절되었습니다. 사유는 고객센터로 문의주세요.'
+            : '계정 상태가 변경되었습니다. 다시 로그인해주세요.',
+          [{ text: '확인', onPress: () => router.replace('/(auth)' as any) }],
+        );
+      }
+    } catch { /* 조회 실패는 무시 — fetchData 쪽에서 별도로 처리됨 */ }
+  }, [currentDriverId, router]);
+
+  // 관리자 대시보드에서 예약 정보를 수정한 뒤 앱으로 돌아와도 최신 값이 보이도록,
+  // 마운트 시뿐 아니라 이 탭이 다시 포커스될 때마다(백그라운드 복귀, 다른 화면에서 뒤로가기 등) 재조회
+  useFocusEffect(useCallback(() => { fetchData(); checkStillApproved(); }, [fetchData, checkStillApproved]));
 
   useEffect(() => {
     if (activeTab !== 'completed' || !currentDriverId) return;
@@ -537,7 +669,7 @@ export default function DiagnosisManagement() {
 
         <Modal visible={menuVisible} transparent animationType="none" onRequestClose={closeDrawer}>
           <Pressable style={styles.drawerOverlay} onPress={closeDrawer}>
-            <Animated.View style={[styles.drawer, { backgroundColor: theme.card, transform: [{ translateX: drawerAnim }] }]}>
+            <Animated.View style={[styles.drawer, { backgroundColor: theme.card, paddingTop: insets.top, transform: [{ translateX: drawerAnim }] }]}>
               <Pressable>
                 <View style={[styles.drawerHeader, { borderBottomColor: theme.border }]}>
                   <Text style={[styles.drawerTitle, { color: theme.textMain }]}>더보기</Text>
@@ -565,7 +697,32 @@ export default function DiagnosisManagement() {
                   <Text style={[styles.drawerItemText, { color: theme.textMain }]}>도막측정</Text>
                   <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.drawerItem, { borderBottomColor: theme.border }]}
+                  onPress={() => {
+                    closeDrawer();
+                    setTimeout(() => router.push({
+                      pathname: '/CarEvaluationSheet' as any,
+                      params: {
+                        requestId: 'practice',
+                        carNumber: '연습용',
+                        carModel: '연습 차량',
+                        serviceType: 'EVALUATION_DELIVERY',
+                        mode: 'practice',
+                      },
+                    }), 250);
+                  }}
+                >
+                  <View style={[styles.drawerItemIcon, { backgroundColor: isDark ? '#1a2e1e' : '#f0fdf4' }]}>
+                    <Ionicons name="flask-outline" size={20} color={theme.accent} />
+                  </View>
+                  <Text style={[styles.drawerItemText, { color: theme.textMain }]}>진단 테스트 해보기</Text>
+                  <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+                </TouchableOpacity>
               </Pressable>
+              <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.3.13</Text>
+              </View>
             </Animated.View>
           </Pressable>
         </Modal>
@@ -607,9 +764,26 @@ export default function DiagnosisManagement() {
                 }
               </View>
               <View style={styles.infoSection}>
+                <View style={styles.infoRow}><Text style={styles.label}>딜러이름</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.dealerName || '없음'}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>차량번호</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>위치</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.address}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>시간</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.preferredDateTime}</Text></View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.label}>고객번호</Text>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                    <Text
+                      style={[styles.value, { color: theme.textMain }]}
+                      onPress={item.customerContact ? () => Clipboard.setStringAsync(item.customerContact!) : undefined}
+                    >
+                      {formatPhone(item.customerContact) || '없음'}
+                    </Text>
+                    {activeTab === 'upcoming' && (
+                      <TouchableOpacity onPress={() => openContactEdit(item)} style={{ marginLeft: 6, padding: 2 }}>
+                        <Ionicons name="pencil" size={14} color={theme.textSub} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
               </View>
               {renderButtons(item)}
             </View>
@@ -710,11 +884,12 @@ export default function DiagnosisManagement() {
           <Pressable style={styles.modalOverlay} onPress={() => { setContactModalVisible(false); setNavModalVisible(false); }}>
             <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
               <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
-              <Text style={[styles.modalTitle, { color: theme.textMain }]}>{isContactModalVisible ? '차주에게 연락' : '길찾기 앱 선택'}</Text>
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>{isContactModalVisible ? '딜러에게 연락' : '길찾기 앱 선택'}</Text>
               {isContactModalVisible ? (
                 <>
                   <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel')}><Ionicons name="call" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>전화하기</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>문자 보내기</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
                 </>
               ) : (
                 <View style={styles.mapGroup}>
@@ -744,6 +919,17 @@ export default function DiagnosisManagement() {
                 <Text style={[styles.contactOptionText, { color: theme.textMain }]}>시간 변경</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                style={styles.contactOption}
+                onPress={() => {
+                  const item = moreOptionsItem!;
+                  setMoreOptionsItem(null);
+                  setTimeout(() => openContactEdit(item), 300);
+                }}
+              >
+                <Ionicons name="call-outline" size={22} color={theme.accent} />
+                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>고객번호 수정</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={[styles.contactOption, { borderBottomWidth: 0 }]}
                 onPress={() => {
                   const item = moreOptionsItem;
@@ -755,6 +941,43 @@ export default function DiagnosisManagement() {
                 <Text style={[styles.contactOptionText, { color: '#e53e3e' }]}>예약 취소</Text>
               </TouchableOpacity>
             </View>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={!!contactEditItem} transparent animationType="slide">
+          <Pressable style={styles.modalOverlay} onPress={() => setContactEditItem(null)}>
+            <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]}>
+              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>고객번호 수정</Text>
+              <TextInput
+                value={contactEditValue}
+                onChangeText={setContactEditValue}
+                placeholder="예: 010-1234-5678"
+                placeholderTextColor={theme.textSub}
+                keyboardType="phone-pad"
+                autoFocus
+                style={{
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 16,
+                  color: theme.textMain,
+                  marginTop: 8,
+                }}
+              />
+              <TouchableOpacity
+                style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
+                onPress={handleContactSave}
+                disabled={contactSaving}
+              >
+                {contactSaving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
+                }
+              </TouchableOpacity>
+            </Pressable>
           </Pressable>
         </Modal>
 
@@ -844,9 +1067,9 @@ const styles = StyleSheet.create({
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
   tabText: { fontSize: 15, fontWeight: 'bold' },
 
-  dateStripScroll: { backgroundColor: '#f2f3f5', height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
+  dateStripScroll: { height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
-  dateChip: { backgroundColor: '#fff', borderRadius: 12, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  dateChip: { borderRadius: 12, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   dateChipFixed: { width: 52, height: 56, minHeight: 56, maxHeight: 56 },
   dateChipAllText: { fontSize: 14, fontWeight: '700', lineHeight: 18, includeFontPadding: false, textAlign: 'center' },
   dateChipDay: { fontSize: 12, fontWeight: '600', lineHeight: 16, includeFontPadding: false, textAlign: 'center' },
@@ -917,7 +1140,9 @@ const styles = StyleSheet.create({
 
   moreBtn: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   drawerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', flexDirection: 'row', justifyContent: 'flex-end' },
-  drawer: { width: DRAWER_W, height: '100%', shadowColor: '#000', shadowOpacity: 0.3, shadowOffset: { width: -3, height: 0 }, shadowRadius: 10, elevation: 20 },
+  drawer: { width: DRAWER_W, height: '100%', justifyContent: 'space-between', shadowColor: '#000', shadowOpacity: 0.3, shadowOffset: { width: -3, height: 0 }, shadowRadius: 10, elevation: 20 },
+  drawerFooter: { alignItems: 'center', paddingTop: 12 },
+  drawerFooterText: { fontSize: 12, fontWeight: '500' },
   drawerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1 },
   drawerTitle: { fontSize: 17, fontWeight: '700' },
   drawerItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 18, borderBottomWidth: 1, gap: 14 },

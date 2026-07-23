@@ -58,19 +58,37 @@ export default function MyScheduleScreen() {
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [selectedVehicles, setSelectedVehicles] = useState<string[]>(['승용차', 'SUV']);
 
+  // 관리자가 계정을 삭제/재생성해서 로컬에 남은 driverId가 더 이상 서버에 없는 경우 —
+  // 로그인 화면(app/(auth)/index.tsx)의 자동로그인 재검증과 같은 패턴으로, 앱이 이미 켜져있는
+  // 도중에 계정이 삭제돼도 여기서 잡아서 강제 재로그인시킨다(안 그러면 저장이 영원히 실패함).
+  const handleInvalidDriver = useCallback(async () => {
+    await AsyncStorage.multiRemove(['driverId', 'driverUsername', 'driverName']);
+    Alert.alert('알림', '계정 정보를 찾을 수 없습니다. 다시 로그인해주세요.', [
+      { text: '확인', onPress: () => router.replace('/(auth)' as any) },
+    ]);
+  }, [router]);
+
   const load = useCallback(async (id: string) => {
     try {
       const res = await axios.get(`${API_BASE_URL}/drivers/${id}`);
       const d = res.data;
+      if (!d) { setLoading(false); await handleInvalidDriver(); return; }
       if (d.availableDays?.length) setSelectedDays(d.availableDays);
       if (d.availableStartTime) setStartTime(d.availableStartTime);
       if (d.availableEndTime) setEndTime(d.availableEndTime);
       if (d.maxDailyBookings) setMaxDaily(d.maxDailyBookings);
       if (d.regions?.length) setSelectedRegions(d.regions);
       if (d.vehicleTypes?.length) setSelectedVehicles(d.vehicleTypes);
-    } catch { /* 첫 설정이면 빈 값 유지 */ }
+    } catch (e) {
+      if (axios.isAxiosError(e) && e.response?.status === 404) {
+        setLoading(false);
+        await handleInvalidDriver();
+        return;
+      }
+      /* 그 외 오류(네트워크 등)는 첫 설정으로 보고 빈 값 유지 */
+    }
     finally { setLoading(false); }
-  }, []);
+  }, [handleInvalidDriver]);
 
   useEffect(() => {
     AsyncStorage.getItem('driverId').then(id => {
@@ -106,8 +124,20 @@ export default function MyScheduleScreen() {
         vehicleTypes: selectedVehicles,
       });
       Alert.alert('저장 완료', '스케줄이 업데이트되었습니다.', [{ text: '확인', onPress: () => router.back() }]);
-    } catch {
-      Alert.alert('오류', '저장에 실패했습니다. 다시 시도해주세요.');
+    } catch (e) {
+      const detail = axios.isAxiosError(e) ? JSON.stringify(e.response?.data ?? e.message) : String(e);
+      console.log('[스케줄 저장 실패]', detail);
+      // 진단사 폰을 직접 확인할 수 없으니 서버에도 남겨서 원격으로 조회 가능하게 함
+      axios.post(`${API_BASE_URL}/client-error-logs`, {
+        driverId,
+        screen: 'my-schedule',
+        message: detail,
+      }).catch(() => {});
+      if (axios.isAxiosError(e) && e.response?.status === 404) {
+        await handleInvalidDriver();
+      } else {
+        Alert.alert('오류', '저장에 실패했습니다. 다시 시도해주세요.');
+      }
     } finally { setSaving(false); }
   };
 

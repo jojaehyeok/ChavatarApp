@@ -80,7 +80,7 @@ interface Props {
   containerWidth?: number;
 }
 
-export default function CarEvaluationDamageChecker({
+function CarEvaluationDamageChecker({
   checkedDamages,
   onChange,
   readonly = false,
@@ -157,3 +157,8 @@ const styles = StyleSheet.create({
   symbolText: { fontWeight: 'bold' },
   emptyText: { color: 'rgba(255,255,255,0.55)', fontWeight: '600' },
 });
+
+// SVG + 37개 터치 영역을 그리는 무거운 컴포넌트라, 부모(폼 전체)가 리렌더될 때마다
+// (타이핑, 백그라운드 업로드 진행률 등) 같이 다시 그려지면 렉이 심하다.
+// checkedDamages/onChange가 실제로 바뀔 때만 리렌더되도록 memo로 막는다.
+export default React.memo(CarEvaluationDamageChecker);
