@@ -107,6 +107,7 @@ interface DiagnosisItem {
   serviceType?: string;
   assignedDriverId?: string | null;
   assignedDriverName?: string | null;
+  assignedByAgentId?: string | null;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -308,6 +309,10 @@ export default function DiagnosisManagement() {
   const [contactEditItem, setContactEditItem] = useState<DiagnosisItem | null>(null);
   const [contactEditValue, setContactEditValue] = useState('');
   const [requestInfoItem, setRequestInfoItem] = useState<DiagnosisItem | null>(null);
+  const [isAgentTier, setIsAgentTier] = useState(false);
+  const [agentAssignItem, setAgentAssignItem] = useState<DiagnosisItem | null>(null);
+  const [agentDriverList, setAgentDriverList] = useState<{ id: number; name: string }[]>([]);
+  const [agentAssigning, setAgentAssigning] = useState(false);
   const [contactSaving, setContactSaving] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
@@ -384,7 +389,10 @@ export default function DiagnosisManagement() {
   useEffect(() => {
     if (!currentDriverId) return;
     axios.get(`${API_BASE_URL}/drivers/${currentDriverId}`)
-      .then(res => { if (typeof res.data?.isActive === 'boolean') setIsActiveOn(res.data.isActive); })
+      .then(res => {
+        if (typeof res.data?.isActive === 'boolean') setIsActiveOn(res.data.isActive);
+        setIsAgentTier(res.data?.tier === 'agent');
+      })
       .catch(() => {});
   }, [currentDriverId]);
 
@@ -473,9 +481,11 @@ export default function DiagnosisManagement() {
         // 진단사가 방문할 필요가 없음 — 앱 어느 탭에도 노출하지 않음
         if (item.source?.startsWith('self-')) return false;
         const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
+        // 에이전트가 다른 진단사에게 지정 배정한 건은, 배정한 본인도 완료된 예약 탭에서 리포트를 확인/수정할 수 있어야 함
+        const isAgentAssignedByMe = String(item.assignedByAgentId) === String(currentDriverId);
         if (activeTab === 'request') return item.status === 'PENDING';
         if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
-        return item.status === 'COMPLETED' && isMy;
+        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
       });
       // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
       // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
@@ -523,6 +533,35 @@ export default function DiagnosisManagement() {
       setActiveTab('upcoming');
       fetchData();
     } catch { Alert.alert('오류', '확정 실패'); }
+  };
+
+  const openAgentAssign = async (item: DiagnosisItem) => {
+    setAgentAssignItem(item);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/drivers`);
+      const list = Array.isArray(res.data) ? res.data : [];
+      setAgentDriverList(
+        list
+          .filter((d: any) => d.status === 'APPROVED' && String(d.id) !== String(currentDriverId))
+          .map((d: any) => ({ id: d.id, name: d.name })),
+      );
+    } catch { setAgentDriverList([]); }
+  };
+
+  const handleAgentAssign = async (targetDriverId: number, targetDriverName: string) => {
+    if (!agentAssignItem) return;
+    setAgentAssigning(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${agentAssignItem.id}/agent-assign`, {
+        agentDriverId: currentDriverId,
+        targetDriverId: String(targetDriverId),
+        targetDriverName,
+      });
+      Alert.alert('배정 완료', `${targetDriverName} 평가사에게 배정되었습니다.`);
+      setAgentAssignItem(null);
+      fetchData();
+    } catch { Alert.alert('오류', '지정 배정에 실패했습니다.'); }
+    finally { setAgentAssigning(false); }
   };
 
   const openContactEdit = (item: DiagnosisItem) => {
@@ -613,9 +652,16 @@ export default function DiagnosisManagement() {
   const renderButtons = (item: DiagnosisItem) => {
     if (activeTab === 'request') {
       return (
-        <TouchableOpacity style={[styles.mainBtn, { backgroundColor: theme.accent }]} onPress={() => handleClaim(Number(item.id))}>
-          <Text style={{ color: '#fff', fontWeight: 'bold' }}>내 담당으로 확정하기</Text>
-        </TouchableOpacity>
+        <View style={{ gap: 8 }}>
+          <TouchableOpacity style={[styles.mainBtn, { backgroundColor: theme.accent }]} onPress={() => handleClaim(Number(item.id))}>
+            <Text style={{ color: '#fff', fontWeight: 'bold' }}>내 담당으로 확정하기</Text>
+          </TouchableOpacity>
+          {isAgentTier && (
+            <TouchableOpacity style={[styles.mainBtn, { backgroundColor: theme.buttonSub }]} onPress={() => openAgentAssign(item)}>
+              <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>평가사 지정 배정</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       );
     }
     if (activeTab === 'upcoming') {
@@ -640,7 +686,9 @@ export default function DiagnosisManagement() {
     // completedAt/updatedAt을 쓰면 수정할 때마다 2시간이 계속 늘어나버림.
     // (firstCompletedAt이 없는 과거 데이터는 기존 방식으로 폴백)
     const completedTime = item.firstCompletedAt || item.completedAt || item.updatedAt;
-    const canEdit = completedTime ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000 : false;
+    const isAgentAssignedByMe = String(item.assignedByAgentId) === String(currentDriverId);
+    // 에이전트가 지정 배정한 건의 리포트는 시간 제한 없이 수정 가능
+    const canEdit = isAgentAssignedByMe || (completedTime ? Date.now() - new Date(completedTime).getTime() < 2 * 60 * 60 * 1000 : false);
     const itemRating = ratingMap[String(item.id)];
     return (
       <View style={{ gap: 8 }}>
@@ -1032,6 +1080,34 @@ export default function DiagnosisManagement() {
                   {requestInfoItem?.additionalMemo || '전달사항이 없습니다.'}
                 </Text>
               </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={!!agentAssignItem} transparent animationType="slide">
+          <Pressable style={styles.modalOverlay} onPress={() => setAgentAssignItem(null)}>
+            <Pressable style={[styles.modalContent, { backgroundColor: theme.card, maxHeight: '70%' }]}>
+              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>평가사 지정 배정</Text>
+              <Text style={{ fontSize: 13, color: theme.textSub, marginTop: -8, marginBottom: 12 }}>
+                {agentAssignItem?.carNumber} · {agentAssignItem?.preferredDateTime}
+              </Text>
+              <ScrollView style={{ maxHeight: 360 }}>
+                {agentDriverList.length === 0 ? (
+                  <Text style={{ color: theme.textSub, textAlign: 'center', paddingVertical: 20 }}>배정 가능한 평가사가 없습니다.</Text>
+                ) : agentDriverList.map(d => (
+                  <TouchableOpacity
+                    key={d.id}
+                    style={styles.contactOption}
+                    disabled={agentAssigning}
+                    onPress={() => handleAgentAssign(d.id, d.name)}
+                  >
+                    <Ionicons name="person-circle-outline" size={22} color={theme.accent} />
+                    <Text style={[styles.contactOptionText, { color: theme.textMain }]}>{d.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              {agentAssigning && <ActivityIndicator color={theme.accent} style={{ marginTop: 12 }} />}
             </Pressable>
           </Pressable>
         </Modal>
