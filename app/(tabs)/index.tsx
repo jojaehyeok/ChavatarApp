@@ -308,9 +308,6 @@ export default function DiagnosisManagement() {
   const [contactEditItem, setContactEditItem] = useState<DiagnosisItem | null>(null);
   const [contactEditValue, setContactEditValue] = useState('');
   const [requestInfoItem, setRequestInfoItem] = useState<DiagnosisItem | null>(null);
-  const [reqAddress, setReqAddress] = useState('');
-  const [reqDetailAddress, setReqDetailAddress] = useState('');
-  const [reqSaving, setReqSaving] = useState(false);
   const [contactSaving, setContactSaving] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
@@ -548,22 +545,6 @@ export default function DiagnosisManagement() {
 
   const openRequestInfo = (item: DiagnosisItem) => {
     setRequestInfoItem(item);
-    setReqAddress(item.address || '');
-    setReqDetailAddress(item.detailAddress || '');
-  };
-
-  const handleRequestInfoSave = async () => {
-    if (!requestInfoItem) return;
-    setReqSaving(true);
-    try {
-      await axios.patch(`${API_BASE_URL}/external/request/${requestInfoItem.id}/status`, {
-        address: reqAddress.trim(),
-        detailAddress: reqDetailAddress.trim() || null,
-      });
-      setRequestInfoItem(null);
-      fetchData();
-    } catch { Alert.alert('오류', '진단장소 저장에 실패했습니다.'); }
-    finally { setReqSaving(false); }
   };
 
   const handleCancel = async () => {
@@ -1036,30 +1017,12 @@ export default function DiagnosisManagement() {
               </Text>
 
               <Text style={[styles.label, { marginTop: 4 }]}>진단 장소</Text>
-              <TextInput
-                value={reqAddress}
-                onChangeText={setReqAddress}
-                placeholder="주소"
-                placeholderTextColor={theme.textSub}
-                style={{
-                  borderWidth: 1, borderColor: theme.border, borderRadius: 10,
-                  paddingHorizontal: 14, paddingVertical: 10, fontSize: 15,
-                  color: theme.textMain, marginTop: 6,
-                }}
-              />
-              <TextInput
-                value={reqDetailAddress}
-                onChangeText={setReqDetailAddress}
-                placeholder="상세주소 (층, 구역 등)"
-                placeholderTextColor={theme.textSub}
-                style={{
-                  borderWidth: 1, borderColor: theme.border, borderRadius: 10,
-                  paddingHorizontal: 14, paddingVertical: 10, fontSize: 15,
-                  color: theme.textMain, marginTop: 8,
-                }}
-              />
+              <Text style={{ fontSize: 15, color: theme.textMain, marginTop: 2, marginBottom: 12 }}>
+                {requestInfoItem?.address}
+                {requestInfoItem?.detailAddress ? ` ${requestInfoItem.detailAddress}` : ''}
+              </Text>
 
-              <Text style={[styles.label, { marginTop: 16 }]}>추가 전달사항</Text>
+              <Text style={[styles.label, { marginTop: 4 }]}>추가 전달사항</Text>
               <View style={{
                 borderWidth: 1, borderColor: theme.border, borderRadius: 10,
                 paddingHorizontal: 14, paddingVertical: 10, marginTop: 6,
@@ -1069,17 +1032,6 @@ export default function DiagnosisManagement() {
                   {requestInfoItem?.additionalMemo || '전달사항이 없습니다.'}
                 </Text>
               </View>
-
-              <TouchableOpacity
-                style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
-                onPress={handleRequestInfoSave}
-                disabled={reqSaving}
-              >
-                {reqSaving
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>진단장소 저장</Text>
-                }
-              </TouchableOpacity>
             </Pressable>
           </Pressable>
         </Modal>
