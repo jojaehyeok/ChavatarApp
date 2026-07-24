@@ -12,7 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -127,9 +127,11 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   // 두 손가락(핀치/이동)은 여기서 가로채지 않고 확대 제스처로 넘긴다 —
-  // 한 손가락일 때만 그리기 도구로 처리
-  const panResponder = useRef(
-    PanResponder.create({
+  // 한 손가락일 때만 그리기 도구로 처리.
+  // useRef로 한 번만 만들지 않고 매 렌더마다 새로 만든다 — useRef로 고정하면 내부
+  // 콜백 클로저가 최초 렌더 시점의 tool/uri/naturalSize/imgLayout을 그대로 붙잡아서
+  // (stale closure) 도구를 바꿔도 항상 "원"으로만 그려지는 버그가 있었음.
+  const panResponder = PanResponder.create({
       onStartShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length === 1,
       onMoveShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length === 1,
       onPanResponderGrant: (evt) => {
@@ -197,8 +199,7 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
           return null;
         });
       },
-    }),
-  ).current;
+  });
 
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
@@ -283,6 +284,10 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
+      {/* Modal은 안드로이드에서 별도 네이티브 창으로 뜨기 때문에, 화면 메인에 있는
+          GestureHandlerRootView의 자식이 아니게 됨 — 핀치 제스처가 동작하려면
+          Modal 내부에도 별도로 하나 더 필요하다 */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.safe} edges={["top", "bottom", "left", "right"]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onCancel} style={styles.headerBtn}>
@@ -359,6 +364,7 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
