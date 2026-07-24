@@ -162,11 +162,11 @@ const CATEGORIES = [
   { id: "interior", label: "실내", min: 5 },
   { id: "engine", label: "엔진룸", min: 1 },
   { id: "extra", label: "옵션", min: 1 },
-  { id: "damage", label: "외판 데미지", min: 1 },
+  { id: "damage", label: "내외판 데미지", min: 1 },
 ];
 
 // 진단평가사가 촬영하는 순서(외관→실내→휠&타이어→옵션→엔진룸→하부/기타누유) 그대로
-// 개수 기준으로 카테고리를 배정한다. 정해진 개수를 넘어가는 사진은 전부 외판 데미지로 간다.
+// 개수 기준으로 카테고리를 배정한다. 정해진 개수를 넘어가는 사진은 전부 내외판 데미지로 간다.
 // AI 분류는 이 배정을 덮어쓰지 않고, 실제와 다를 때 피드백으로만 쌓인다(_runTask 참고).
 const POOL_SEQUENCE: { id: string; count: number }[] = [
   { id: "exterior", count: 6 },
@@ -303,6 +303,9 @@ export default function CarEvaluationSheet() {
   const [memo, setMemo] = useState("");
   const memoRef = useRef(""); // 타이핑 중 최신값 (state 업데이트 없이 추적)
   const [memoHeight, setMemoHeight] = useState(100); // 줄바꿈 많은 입력도 잘리지 않게 내용에 맞춰 자동으로 늘어남
+  // 확인사항(경고등/옵션/누유/주행중 이상)의 상세 입력창도 동일하게 내용에 맞춰 늘어나도록 —
+  // idx별로 따로 관리(항목마다 길이가 다를 수 있음)
+  const [checklistFieldHeights, setChecklistFieldHeights] = useState<Record<number, number>>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce 타이머
 
   // ── 사이드 미러 마커 ──────────────────────────────────────────────────────
@@ -2427,22 +2430,30 @@ export default function CarEvaluationSheet() {
                 {item.state && (
                   <View style={styles.expandArea}>
                     {isViewMode ? (
+                      // 내용이 길어도(줄바꿈 여러 번 등) 고정 높이(70)에 잘려서 안 보이지
+                      // 않도록 height 고정을 빼고 minHeight로만 최소 크기를 유지
                       <Text
                         style={[
                           styles.tArea,
-                          { color: "#ccc", paddingVertical: 10 },
+                          { color: "#ccc", paddingVertical: 10, height: undefined, minHeight: 70 },
                         ]}
                       >
                         {item.val || "-"}
                       </Text>
                     ) : (
                       <TextInput
-                        style={styles.tArea}
+                        style={[
+                          styles.tArea,
+                          { height: Math.max(70, checklistFieldHeights[idx] || 0) },
+                        ]}
                         placeholder={item.placeholder}
                         placeholderTextColor="#444"
                         multiline
                         value={item.val}
                         onChangeText={item.setVal}
+                        onContentSizeChange={(e) =>
+                          setChecklistFieldHeights((prev) => ({ ...prev, [idx]: e.nativeEvent.contentSize.height + 24 }))
+                        }
                       />
                     )}
                   </View>

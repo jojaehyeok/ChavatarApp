@@ -224,11 +224,11 @@ export default function InspectionDetailView() {
         <View style={styles.grayDivider} />
 
         <PhotoGroup title="📸 외관 (Exterior)" images={data.photos?.exterior} onPressImage={(idx) => openViewer(data.photos.exterior, idx)} />
-        <PhotoGroup title="🛞 휠 & 타이어 (Wheels)" images={data.photos?.wheel} onPressImage={(idx) => openViewer(data.photos.wheel, idx)} />
-        <PhotoGroup title="🔩 하체 점검 (Undercarriage)" images={data.photos?.undercarriage} onPressImage={(idx) => openViewer(data.photos.undercarriage, idx)} />
+        <PhotoGroup title="🛞 휠&트레드 (Wheels)" images={data.photos?.wheel} onPressImage={(idx) => openViewer(data.photos.wheel, idx)} />
         <PhotoGroup title="💺 실내 상태 (Interior)" images={data.photos?.interior} onPressImage={(idx) => openViewer(data.photos.interior, idx)} />
         <PhotoGroup title="⚙️ 엔진룸 (Engine)" images={data.photos?.engine} onPressImage={(idx) => openViewer(data.photos.engine, idx)} />
-        <PhotoGroup title="💥 외판 데미지 (Damage)" images={data.photos?.damage} onPressImage={(idx) => openViewer(data.photos.damage, idx)} />
+        <PhotoGroup title="🔩 하부 & 누유 (Undercarriage)" images={data.photos?.undercarriage} onPressImage={(idx) => openViewer(data.photos.undercarriage, idx)} />
+        <PhotoGroup title="💥 내외판 데미지 (Damage)" images={data.photos?.damage} onPressImage={(idx) => openViewer(data.photos.damage, idx)} />
         <PhotoGroup title="📎 기타 (옵션)" images={data.photos?.extra} onPressImage={(idx) => openViewer(data.photos.extra, idx)} />
 
         <View style={styles.grayDivider} />
