@@ -6,7 +6,6 @@ import {
   Dimensions,
   Image,
   Modal,
-  PanResponder,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -14,6 +13,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -126,80 +126,89 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
 
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-  // 두 손가락(핀치/이동)은 여기서 가로채지 않고 확대 제스처로 넘긴다 —
-  // 한 손가락일 때만 그리기 도구로 처리.
-  // useRef로 한 번만 만들지 않고 매 렌더마다 새로 만든다 — useRef로 고정하면 내부
-  // 콜백 클로저가 최초 렌더 시점의 tool/uri/naturalSize/imgLayout을 그대로 붙잡아서
-  // (stale closure) 도구를 바꿔도 항상 "원"으로만 그려지는 버그가 있었음.
-  const panResponder = PanResponder.create({
-      onStartShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length === 1,
-      onMoveShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length === 1,
-      onPanResponderGrant: (evt) => {
-        const { locationX: x, locationY: y } = evt.nativeEvent;
-        startPoint.current = { x, y };
-        if (tool === "pen") {
-          penD.current = `M${x.toFixed(1)},${y.toFixed(1)}`;
-          setDraft({ id: "draft", type: "pen", d: penD.current });
-        } else if (tool === "circle") {
-          setDraft({ id: "draft", type: "circle", cx: x, cy: y, r: 1 });
-        } else if (tool === "arrow") {
-          setDraft({ id: "draft", type: "arrow", x1: x, y1: y, x2: x, y2: y });
-        } else if (tool === "blur") {
-          setDraft({ id: "draft", type: "blur", x, y, w: 1, h: 1 });
-        }
-      },
-      onPanResponderMove: (evt) => {
-        if (evt.nativeEvent.touches.length !== 1) return;
-        const { locationX: x, locationY: y } = evt.nativeEvent;
-        const sx = startPoint.current.x;
-        const sy = startPoint.current.y;
-        if (tool === "pen") {
-          penD.current += ` L${x.toFixed(1)},${y.toFixed(1)}`;
-          setDraft({ id: "draft", type: "pen", d: penD.current });
-        } else if (tool === "circle") {
-          const r = Math.hypot(x - sx, y - sy);
-          setDraft({ id: "draft", type: "circle", cx: sx, cy: sy, r });
-        } else if (tool === "arrow") {
-          setDraft({ id: "draft", type: "arrow", x1: sx, y1: sy, x2: x, y2: y });
-        } else if (tool === "blur") {
-          setDraft({
-            id: "draft",
-            type: "blur",
-            x: Math.min(sx, x),
-            y: Math.min(sy, y),
-            w: Math.abs(x - sx),
-            h: Math.abs(y - sy),
+  // 그리기 시작/이동/종료 — 전에는 PanResponder(RN 구형 터치 시스템)를 썼는데,
+  // 같은 화면에서 react-native-gesture-handler(핀치/2손가락 이동)와 서로 다른 네이티브
+  // 터치 인식 체계가 충돌해서 제스처가 잘 안 먹는 문제가 있었음. 전부 gesture-handler
+  // 하나로 통일해서 한 시스템에서만 판정하도록 정리.
+  const handleDrawStart = (x: number, y: number) => {
+    startPoint.current = { x, y };
+    if (tool === "pen") {
+      penD.current = `M${x.toFixed(1)},${y.toFixed(1)}`;
+      setDraft({ id: "draft", type: "pen", d: penD.current });
+    } else if (tool === "circle") {
+      setDraft({ id: "draft", type: "circle", cx: x, cy: y, r: 1 });
+    } else if (tool === "arrow") {
+      setDraft({ id: "draft", type: "arrow", x1: x, y1: y, x2: x, y2: y });
+    } else if (tool === "blur") {
+      setDraft({ id: "draft", type: "blur", x, y, w: 1, h: 1 });
+    }
+  };
+
+  const handleDrawMove = (x: number, y: number) => {
+    const sx = startPoint.current.x;
+    const sy = startPoint.current.y;
+    if (tool === "pen") {
+      penD.current += ` L${x.toFixed(1)},${y.toFixed(1)}`;
+      setDraft({ id: "draft", type: "pen", d: penD.current });
+    } else if (tool === "circle") {
+      const r = Math.hypot(x - sx, y - sy);
+      setDraft({ id: "draft", type: "circle", cx: sx, cy: sy, r });
+    } else if (tool === "arrow") {
+      setDraft({ id: "draft", type: "arrow", x1: sx, y1: sy, x2: x, y2: y });
+    } else if (tool === "blur") {
+      setDraft({
+        id: "draft",
+        type: "blur",
+        x: Math.min(sx, x),
+        y: Math.min(sy, y),
+        w: Math.abs(x - sx),
+        h: Math.abs(y - sy),
+      });
+    }
+  };
+
+  const handleDrawEnd = () => {
+    setDraft((d) => {
+      if (!d) return null;
+      // 너무 작은(실수로 탭만 한) 도형은 버린다
+      if (d.type === "circle" && d.r < 4) return null;
+      if (d.type === "blur" && (d.w < 6 || d.h < 6)) return null;
+      if (d.type === "arrow" && Math.hypot(d.x2 - d.x1, d.y2 - d.y1) < 4) return null;
+
+      const finalItem: ShapeItem = { ...d, id: genId() };
+      setItems((prev) => [...prev, finalItem]);
+
+      if (finalItem.type === "blur" && uri && naturalSize) {
+        const scaleX = naturalSize.width / imgLayout.width;
+        const scaleY = naturalSize.height / imgLayout.height;
+        const b = finalItem as Extract<ShapeItem, { type: "blur" }>;
+        setItems((prev) => prev.map((it) => (it.id === b.id ? { ...it, loading: true } : it)));
+        makePixelPatch(uri, b.x * scaleX, b.y * scaleY, b.w * scaleX, b.h * scaleY)
+          .then((pixelUri) => {
+            setItems((prev) => prev.map((it) => (it.id === b.id ? { ...it, pixelUri, loading: false } : it)));
+          })
+          .catch(() => {
+            setItems((prev) => prev.map((it) => (it.id === b.id ? { ...it, loading: false } : it)));
           });
-        }
-      },
-      onPanResponderRelease: () => {
-        setDraft((d) => {
-          if (!d) return null;
-          // 너무 작은(실수로 탭만 한) 도형은 버린다
-          if (d.type === "circle" && d.r < 4) return null;
-          if (d.type === "blur" && (d.w < 6 || d.h < 6)) return null;
-          if (d.type === "arrow" && Math.hypot(d.x2 - d.x1, d.y2 - d.y1) < 4) return null;
+      }
+      return null;
+    });
+  };
 
-          const finalItem: ShapeItem = { ...d, id: genId() };
-          setItems((prev) => [...prev, finalItem]);
-
-          if (finalItem.type === "blur" && uri && naturalSize) {
-            const scaleX = naturalSize.width / imgLayout.width;
-            const scaleY = naturalSize.height / imgLayout.height;
-            const b = finalItem as Extract<ShapeItem, { type: "blur" }>;
-            setItems((prev) => prev.map((it) => (it.id === b.id ? { ...it, loading: true } : it)));
-            makePixelPatch(uri, b.x * scaleX, b.y * scaleY, b.w * scaleX, b.h * scaleY)
-              .then((pixelUri) => {
-                setItems((prev) => prev.map((it) => (it.id === b.id ? { ...it, pixelUri, loading: false } : it)));
-              })
-              .catch(() => {
-                setItems((prev) => prev.map((it) => (it.id === b.id ? { ...it, loading: false } : it)));
-              });
-          }
-          return null;
-        });
-      },
-  });
+  // 정확히 손가락 1개일 때만 활성화 — 2개가 되는 순간 자동으로 실패 처리되어
+  // 핀치/2손가락 이동 제스처로 넘어간다(같은 gesture-handler 시스템 안이라 충돌 없음)
+  const drawGesture = Gesture.Pan()
+    .minPointers(1)
+    .maxPointers(1)
+    .onBegin((e) => {
+      runOnJS(handleDrawStart)(e.x, e.y);
+    })
+    .onUpdate((e) => {
+      runOnJS(handleDrawMove)(e.x, e.y);
+    })
+    .onEnd(() => {
+      runOnJS(handleDrawEnd)();
+    });
 
   const pinchGesture = Gesture.Pinch()
     .onUpdate((e) => {
@@ -210,7 +219,7 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
       savedScale.value = scale.value;
     });
 
-  const panGesture = Gesture.Pan()
+  const panZoomGesture = Gesture.Pan()
     .minPointers(2)
     .maxPointers(2)
     .onUpdate((e) => {
@@ -222,7 +231,10 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
       savedTranslateY.value = translateY.value;
     });
 
-  const zoomGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+  // 1손가락(그리기) vs 2손가락(확대/이동)은 애초에 동시에 만족될 수 없어서
+  // Race로 묶어도 안전 — 손가락 개수로 자연히 갈린다
+  const zoomGesture = Gesture.Simultaneous(pinchGesture, panZoomGesture);
+  const combinedGesture = Gesture.Race(zoomGesture, drawGesture);
 
   const animatedZoomStyle = useAnimatedStyle(() => ({
     transform: [
@@ -308,10 +320,10 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
 
         <View style={styles.canvasWrap}>
           {uri && (
-            <GestureDetector gesture={zoomGesture}>
+            <GestureDetector gesture={combinedGesture}>
               <Animated.View style={[{ width: imgLayout.width, height: imgLayout.height }, animatedZoomStyle]}>
                 <ViewShot ref={shotRef} style={{ width: imgLayout.width, height: imgLayout.height }} options={{ format: "jpg", quality: 0.9 }}>
-                  <View style={{ width: imgLayout.width, height: imgLayout.height }} {...panResponder.panHandlers}>
+                  <View style={{ width: imgLayout.width, height: imgLayout.height }}>
                     <Image source={{ uri }} style={{ width: imgLayout.width, height: imgLayout.height }} resizeMode="cover" />
                     {items
                       .filter((it): it is Extract<ShapeItem, { type: "blur" }> => it.type === "blur")
