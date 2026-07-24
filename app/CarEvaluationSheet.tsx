@@ -2611,10 +2611,12 @@ export default function CarEvaluationSheet() {
             <View style={styles.catBox}>
               <Text style={styles.catTitle}>기타 의견</Text>
               {isViewMode ? (
+                // tArea의 고정 height:70이 minHeight보다 우선 적용돼서 긴 내용이 잘려 안 보이던 문제 —
+                // height를 명시적으로 없애야 minHeight가 실제로 적용됨
                 <Text
                   style={[
                     styles.tArea,
-                    { color: "#ccc", paddingVertical: 10, minHeight: 60 },
+                    { color: "#ccc", paddingVertical: 10, height: undefined, minHeight: 60 },
                   ]}
                 >
                   {memo || "-"}
