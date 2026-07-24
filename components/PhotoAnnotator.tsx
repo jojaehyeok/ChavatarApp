@@ -7,12 +7,18 @@ import {
   Image,
   Modal,
   PanResponder,
-  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Path, Polygon } from "react-native-svg";
 import ViewShot from "react-native-view-shot";
 
@@ -35,6 +41,7 @@ const SCREEN_W = Dimensions.get("window").width;
 const SCREEN_H = Dimensions.get("window").height;
 const TOOLBAR_H = 64;
 const HEADER_H = 56;
+const MAX_ZOOM = 4;
 
 // 드래그로 지정한 사각형 영역을 실제 원본 이미지에서 잘라 아주 작게 축소했다가
 // 다시 키워서 모자이크(블러 느낌)를 만든다 — BlurView처럼 화면 캡처와 겹쳐서
@@ -63,6 +70,7 @@ async function makePixelPatch(
 }
 
 export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props) {
+  const insets = useSafeAreaInsets();
   const [tool, setTool] = useState<Tool>("circle");
   const [items, setItems] = useState<ShapeItem[]>([]);
   const [draft, setDraft] = useState<ShapeItem | null>(null);
@@ -74,16 +82,35 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
   const startPoint = useRef({ x: 0, y: 0 });
   const penD = useRef("");
 
+  // 확대/이동은 화면에 보여지는 용도일 뿐 — shotRef는 이 변환이 안 걸린 안쪽 뷰에 달아서
+  // "완료" 눌렀을 때 확대 상태와 무관하게 항상 사진 전체가 원래 배율로 저장되게 한다.
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  const resetZoom = () => {
+    scale.value = withTiming(1);
+    savedScale.value = 1;
+    translateX.value = withTiming(0);
+    translateY.value = withTiming(0);
+    savedTranslateX.value = 0;
+    savedTranslateY.value = 0;
+  };
+
   useEffect(() => {
     setItems([]);
     setDraft(null);
     setTool("circle");
+    resetZoom();
     if (!uri) return;
     Image.getSize(
       uri,
       (w, h) => {
         setNaturalSize({ width: w, height: h });
-        const maxH = SCREEN_H - HEADER_H - TOOLBAR_H;
+        const maxH = SCREEN_H - HEADER_H - TOOLBAR_H - insets.top - insets.bottom;
         let displayW = SCREEN_W;
         let displayH = (h / w) * displayW;
         if (displayH > maxH) {
@@ -94,14 +121,17 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
       },
       () => {},
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uri]);
 
   const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
+  // 두 손가락(핀치/이동)은 여기서 가로채지 않고 확대 제스처로 넘긴다 —
+  // 한 손가락일 때만 그리기 도구로 처리
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length === 1,
+      onMoveShouldSetPanResponder: (evt) => evt.nativeEvent.touches.length === 1,
       onPanResponderGrant: (evt) => {
         const { locationX: x, locationY: y } = evt.nativeEvent;
         startPoint.current = { x, y };
@@ -117,6 +147,7 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
         }
       },
       onPanResponderMove: (evt) => {
+        if (evt.nativeEvent.touches.length !== 1) return;
         const { locationX: x, locationY: y } = evt.nativeEvent;
         const sx = startPoint.current.x;
         const sy = startPoint.current.y;
@@ -168,6 +199,37 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
       },
     }),
   ).current;
+
+  const pinchGesture = Gesture.Pinch()
+    .onUpdate((e) => {
+      const next = savedScale.value * e.scale;
+      scale.value = Math.max(1, Math.min(MAX_ZOOM, next));
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+    });
+
+  const panGesture = Gesture.Pan()
+    .minPointers(2)
+    .maxPointers(2)
+    .onUpdate((e) => {
+      translateX.value = savedTranslateX.value + e.translationX;
+      translateY.value = savedTranslateY.value + e.translationY;
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const zoomGesture = Gesture.Simultaneous(pinchGesture, panGesture);
+
+  const animatedZoomStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
 
   const handleUndo = () => setItems((prev) => prev.slice(0, -1));
 
@@ -221,55 +283,67 @@ export default function PhotoAnnotator({ visible, uri, onCancel, onSave }: Props
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} edges={["top", "bottom", "left", "right"]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onCancel} style={styles.headerBtn}>
             <Text style={styles.headerBtnText}>취소</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>사진 표시하기</Text>
-          <TouchableOpacity onPress={handleUndo} style={styles.headerBtn} disabled={items.length === 0}>
-            <Ionicons name="arrow-undo-outline" size={22} color={items.length === 0 ? "#555" : "#fff"} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 4 }}>
+            {/* 리애니메이티드 shared value는 읽어도 리렌더를 안 일으켜서 조건부 노출 대신 항상 노출 —
+                확대 안 된 상태에서 눌러도 resetZoom은 그냥 아무 변화 없이 끝나 무해함 */}
+            <TouchableOpacity onPress={resetZoom} style={styles.headerBtn}>
+              <Ionicons name="scan-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleUndo} style={styles.headerBtn} disabled={items.length === 0}>
+              <Ionicons name="arrow-undo-outline" size={22} color={items.length === 0 ? "#555" : "#fff"} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.canvasWrap}>
           {uri && (
-            <ViewShot ref={shotRef} style={{ width: imgLayout.width, height: imgLayout.height }} options={{ format: "jpg", quality: 0.9 }}>
-              <View style={{ width: imgLayout.width, height: imgLayout.height }} {...panResponder.panHandlers}>
-                <Image source={{ uri }} style={{ width: imgLayout.width, height: imgLayout.height }} resizeMode="cover" />
-                {items
-                  .filter((it): it is Extract<ShapeItem, { type: "blur" }> => it.type === "blur")
-                  .map((b) =>
-                    b.pixelUri ? (
-                      <Image
-                        key={b.id}
-                        source={{ uri: b.pixelUri }}
-                        style={{ position: "absolute", left: b.x, top: b.y, width: b.w, height: b.h }}
-                      />
-                    ) : (
+            <GestureDetector gesture={zoomGesture}>
+              <Animated.View style={[{ width: imgLayout.width, height: imgLayout.height }, animatedZoomStyle]}>
+                <ViewShot ref={shotRef} style={{ width: imgLayout.width, height: imgLayout.height }} options={{ format: "jpg", quality: 0.9 }}>
+                  <View style={{ width: imgLayout.width, height: imgLayout.height }} {...panResponder.panHandlers}>
+                    <Image source={{ uri }} style={{ width: imgLayout.width, height: imgLayout.height }} resizeMode="cover" />
+                    {items
+                      .filter((it): it is Extract<ShapeItem, { type: "blur" }> => it.type === "blur")
+                      .map((b) =>
+                        b.pixelUri ? (
+                          <Image
+                            key={b.id}
+                            source={{ uri: b.pixelUri }}
+                            style={{ position: "absolute", left: b.x, top: b.y, width: b.w, height: b.h }}
+                          />
+                        ) : (
+                          <View
+                            key={b.id}
+                            style={{ position: "absolute", left: b.x, top: b.y, width: b.w, height: b.h, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center" }}
+                          >
+                            {b.loading && <ActivityIndicator size="small" color="#fff" />}
+                          </View>
+                        ),
+                      )}
+                    <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+                      {items.filter((it) => it.type !== "blur").map(renderShape)}
+                      {draft && draft.type !== "blur" && renderShape(draft)}
+                    </Svg>
+                    {draft && draft.type === "blur" && (
                       <View
-                        key={b.id}
-                        style={{ position: "absolute", left: b.x, top: b.y, width: b.w, height: b.h, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center" }}
-                      >
-                        {b.loading && <ActivityIndicator size="small" color="#fff" />}
-                      </View>
-                    ),
-                  )}
-                <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
-                  {items.filter((it) => it.type !== "blur").map(renderShape)}
-                  {draft && draft.type !== "blur" && renderShape(draft)}
-                </Svg>
-                {draft && draft.type === "blur" && (
-                  <View
-                    style={{ position: "absolute", left: draft.x, top: draft.y, width: draft.w, height: draft.h, backgroundColor: "rgba(0,0,0,0.4)" }}
-                  />
-                )}
-              </View>
-            </ViewShot>
+                        style={{ position: "absolute", left: draft.x, top: draft.y, width: draft.w, height: draft.h, backgroundColor: "rgba(0,0,0,0.4)" }}
+                      />
+                    )}
+                  </View>
+                </ViewShot>
+              </Animated.View>
+            </GestureDetector>
           )}
         </View>
+        <Text style={styles.zoomHint}>두 손가락으로 확대/이동 · 한 손가락으로 그리기</Text>
 
-        <View style={styles.toolbar}>
+        <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           {TOOLS.map((t) => (
             <TouchableOpacity
               key={t.id}
@@ -298,15 +372,17 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
   },
-  headerBtn: { padding: 6, minWidth: 44, alignItems: "center" },
+  headerBtn: { padding: 6, minWidth: 40, alignItems: "center" },
   headerBtnText: { color: "#fff", fontSize: 15 },
   headerTitle: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  canvasWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  canvasWrap: { flex: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  zoomHint: { color: "#666", fontSize: 11, textAlign: "center", paddingVertical: 6 },
   toolbar: {
-    height: TOOLBAR_H,
+    minHeight: TOOLBAR_H,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 10,
+    paddingTop: 10,
     gap: 8,
     borderTopWidth: 1,
     borderTopColor: "#222",
