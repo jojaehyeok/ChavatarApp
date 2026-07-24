@@ -111,6 +111,7 @@ interface DiagnosisItem {
   assignedByAgentId?: string | null;
   roundingRequested?: boolean;
   driverMemo?: string | null;
+  adminMemo?: string | null;
   isUrgent?: boolean;
   phoneNumber?: string;
   updatedAt?: string;
@@ -921,6 +922,12 @@ export default function DiagnosisManagement() {
                 }
               </View>
               <View style={styles.infoSection}>
+                {!!item.adminMemo && (
+                  <View style={[styles.adminMemoBox, { backgroundColor: isDark ? 'rgba(255,193,7,0.12)' : '#FFF8E1', borderColor: isDark ? 'rgba(255,193,7,0.35)' : '#FFE082' }]}>
+                    <Ionicons name="megaphone-outline" size={14} color="#F5A623" />
+                    <Text style={[styles.adminMemoText, { color: isDark ? '#FFD54F' : '#8A6300' }]}>{item.adminMemo}</Text>
+                  </View>
+                )}
                 <View style={styles.infoRow}><Text style={styles.label}>딜러이름</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.dealerName || '없음'}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>차량번호</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>위치</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.address}</Text></View>
@@ -941,6 +948,19 @@ export default function DiagnosisManagement() {
                     )}
                   </View>
                 </View>
+                {activeTab === 'upcoming' && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.label}>진단사메모</Text>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={[styles.value, { color: theme.textMain }]} numberOfLines={2}>
+                        {item.driverMemo || '없음'}
+                      </Text>
+                      <TouchableOpacity onPress={() => openMemoEdit(item)} style={{ marginLeft: 6, padding: 2 }}>
+                        <Ionicons name="pencil" size={14} color={theme.textSub} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
               {renderButtons(item)}
             </View>
@@ -1079,17 +1099,6 @@ export default function DiagnosisManagement() {
               >
                 <Ionicons name="time-outline" size={22} color={theme.accent} />
                 <Text style={[styles.contactOptionText, { color: theme.textMain }]}>시간 변경</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.contactOption}
-                onPress={() => {
-                  const item = moreOptionsItem!;
-                  setMoreOptionsItem(null);
-                  setTimeout(() => openMemoEdit(item), 300);
-                }}
-              >
-                <Ionicons name="create-outline" size={22} color={theme.accent} />
-                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>진단사 메모</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.contactOption}
@@ -1394,6 +1403,8 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: 'row', marginBottom: 6 },
   label: { color: '#888', width: 70, fontSize: 14 },
   value: { flex: 1, fontSize: 14 },
+  adminMemoBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 12 },
+  adminMemoText: { flex: 1, fontSize: 13, lineHeight: 18, fontWeight: '600' },
 
   btnGroup: { flexDirection: 'row', gap: 8 },
   subCardBtn: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center' },
