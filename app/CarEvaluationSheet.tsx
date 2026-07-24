@@ -40,6 +40,7 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import CarEvaluationDamageChecker from "../components/CarEvaluationDamageChecker";
+import PhotoAnnotator from "../components/PhotoAnnotator";
 
 // ─── 상수 ─────────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get("window");
@@ -609,6 +610,10 @@ export default function CarEvaluationSheet() {
     useState<MediaLibrary.Album | null>(null);
   const [pickerAssets, setPickerAssets] = useState<MediaLibrary.Asset[]>([]);
   const [pickerSelected, setPickerSelected] = useState<Set<string>>(new Set());
+  // 갤러리 그리드에서 꾹 눌러 표시(도형/펜/블러)한 사진 — asset.id → 편집 완료된 로컬 파일 URI.
+  // confirmPickerSelection에서 원본 대신 이걸 우선 사용한다.
+  const [annotatedUris, setAnnotatedUris] = useState<Record<string, string>>({});
+  const [annotatorTarget, setAnnotatorTarget] = useState<MediaLibrary.Asset | null>(null);
   const [albumDropdownOpen, setAlbumDropdownOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerEndCursor, setPickerEndCursor] = useState<string | undefined>();
@@ -1141,7 +1146,8 @@ export default function CarEvaluationSheet() {
       .map((id) => assetById.get(id))
       .filter((a): a is MediaLibrary.Asset => !!a);
     const categorySnapshot = pickerCategoryId;
-    const uris = selectedList.map((a) => a.uri);
+    // 꾹 눌러서 표시(도형/펜/블러)한 사진은 원본 대신 편집된 버전을 올린다
+    const uris = selectedList.map((a) => annotatedUris[a.id] ?? a.uri);
 
     console.log('[Picker] 확인:', categorySnapshot, uris.length, '장', uris[0]?.slice(0, 60));
 
@@ -1914,16 +1920,23 @@ export default function CarEvaluationSheet() {
                 const selIdx = sel
                   ? [...pickerSelected].indexOf(item.id) + 1
                   : 0;
+                const annotated = !!annotatedUris[item.id];
                 return (
                   <TouchableOpacity
                     onPress={() => togglePickerAsset(item.id)}
+                    onLongPress={() => setAnnotatorTarget(item)}
                     style={styles.pickerThumbWrap}
                   >
                     <Image
-                      source={{ uri: item.uri }}
+                      source={{ uri: annotatedUris[item.id] ?? item.uri }}
                       style={styles.pickerThumb}
                     />
                     {sel && <View style={styles.pickerThumbDim} />}
+                    {annotated && (
+                      <View style={styles.pickerAnnotatedBadge}>
+                        <Ionicons name="brush" size={11} color="#fff" />
+                      </View>
+                    )}
                     <View
                       style={[
                         styles.pickerCheckCircle,
@@ -1938,6 +1951,7 @@ export default function CarEvaluationSheet() {
                 );
               }}
             />
+            <Text style={styles.pickerHint}>사진을 꾹 누르면 도형/펜/블러로 표시할 수 있습니다</Text>
 
             {/* 하단 등록 버튼 */}
             {pickerSelected.size > 0 && (
@@ -1960,6 +1974,18 @@ export default function CarEvaluationSheet() {
             )}
           </SafeAreaView>
         </Modal>
+
+        <PhotoAnnotator
+          visible={!!annotatorTarget}
+          uri={annotatorTarget?.uri ?? null}
+          onCancel={() => setAnnotatorTarget(null)}
+          onSave={(newUri) => {
+            if (annotatorTarget) {
+              setAnnotatedUris((prev) => ({ ...prev, [annotatorTarget.id]: newUri }));
+            }
+            setAnnotatorTarget(null);
+          }}
+        />
 
         {/* 이미지 뷰어 모달 */}
         {/* 🏆 뒤로가기 잘 되는 새 이미지 뷰어 */}
@@ -3242,6 +3268,23 @@ const styles = StyleSheet.create({
   pickerCheckCircleActive: {
     backgroundColor: "#3B82F6",
     borderColor: "#3B82F6",
+  },
+  pickerAnnotatedBadge: {
+    position: "absolute",
+    bottom: 6,
+    left: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#ff3b30",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pickerHint: {
+    color: "#666",
+    fontSize: 11,
+    textAlign: "center",
+    paddingVertical: 8,
   },
   pickerCheckNum: {
     color: "#fff",
