@@ -1037,8 +1037,12 @@ export default function DiagnosisManagement() {
               <Text style={[styles.modalTitle, { color: theme.textMain }]}>{isContactModalVisible ? '연락하기' : '길찾기 앱 선택'}</Text>
               {isContactModalVisible ? (
                 <>
-                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'dealer')}><Ionicons name="call" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>딜러에게 전화하기</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'customer')}><Ionicons name="call-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>차주에게 전화하기</Text></TouchableOpacity>
+                  {selectedItem?.contact && (
+                    <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'dealer')}><Ionicons name="call" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>딜러에게 전화하기</Text></TouchableOpacity>
+                  )}
+                  {selectedItem?.customerContact && (
+                    <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'customer')}><Ionicons name="call-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>차주에게 전화하기</Text></TouchableOpacity>
+                  )}
                   <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms', 'dealer')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>문자 보내기</Text></TouchableOpacity>
                   <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy', 'dealer')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
                 </>
