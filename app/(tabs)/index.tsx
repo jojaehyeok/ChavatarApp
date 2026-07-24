@@ -109,6 +109,7 @@ interface DiagnosisItem {
   assignedDriverName?: string | null;
   assignedByAgentId?: string | null;
   roundingRequested?: boolean;
+  driverMemo?: string | null;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -309,6 +310,9 @@ export default function DiagnosisManagement() {
   const [cancelItem, setCancelItem] = useState<DiagnosisItem | null>(null);
   const [contactEditItem, setContactEditItem] = useState<DiagnosisItem | null>(null);
   const [contactEditValue, setContactEditValue] = useState('');
+  const [memoEditItem, setMemoEditItem] = useState<DiagnosisItem | null>(null);
+  const [memoEditValue, setMemoEditValue] = useState('');
+  const [memoSaving, setMemoSaving] = useState(false);
   const [requestInfoItem, setRequestInfoItem] = useState<DiagnosisItem | null>(null);
   const [isAgentTier, setIsAgentTier] = useState(false);
   const [driverTier, setDriverTier] = useState<'general' | 'certified' | 'agent'>('general');
@@ -443,9 +447,12 @@ export default function DiagnosisManagement() {
     return data.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
   }, [data, activeTab, filterDate]);
 
-  const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy') => {
-    const rawContact = selectedItem?.contact;
-    if (!rawContact) { Alert.alert('오류', '연락처 정보가 없습니다.'); return; }
+  const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy', target: 'dealer' | 'customer' = 'dealer') => {
+    const rawContact = target === 'customer' ? selectedItem?.customerContact : selectedItem?.contact;
+    if (!rawContact) {
+      Alert.alert('오류', target === 'customer' ? '차주 연락처가 없습니다. 고객번호 수정에서 먼저 입력해주세요.' : '연락처 정보가 없습니다.');
+      return;
+    }
     if (type === 'copy') {
       await Clipboard.setStringAsync(rawContact);
       setContactModalVisible(false);
@@ -622,6 +629,24 @@ export default function DiagnosisManagement() {
 
   const openRequestInfo = (item: DiagnosisItem) => {
     setRequestInfoItem(item);
+  };
+
+  const openMemoEdit = (item: DiagnosisItem) => {
+    setMemoEditItem(item);
+    setMemoEditValue(item.driverMemo || '');
+  };
+
+  const handleMemoSave = async () => {
+    if (!memoEditItem) return;
+    setMemoSaving(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${memoEditItem.id}/status`, {
+        driverMemo: memoEditValue.trim() || null,
+      });
+      setMemoEditItem(null);
+      fetchData();
+    } catch { Alert.alert('오류', '메모 저장에 실패했습니다.'); }
+    finally { setMemoSaving(false); }
   };
 
   const handleCancel = async () => {
@@ -992,12 +1017,13 @@ export default function DiagnosisManagement() {
           <Pressable style={styles.modalOverlay} onPress={() => { setContactModalVisible(false); setNavModalVisible(false); }}>
             <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
               <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
-              <Text style={[styles.modalTitle, { color: theme.textMain }]}>{isContactModalVisible ? '딜러에게 연락' : '길찾기 앱 선택'}</Text>
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>{isContactModalVisible ? '연락하기' : '길찾기 앱 선택'}</Text>
               {isContactModalVisible ? (
                 <>
-                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel')}><Ionicons name="call" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>전화하기</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>문자 보내기</Text></TouchableOpacity>
-                  <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'dealer')}><Ionicons name="call" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>딜러에게 전화하기</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'customer')}><Ionicons name="call-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>차주에게 전화하기</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms', 'dealer')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>문자 보내기</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy', 'dealer')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
                 </>
               ) : (
                 <View style={styles.mapGroup}>
@@ -1036,6 +1062,17 @@ export default function DiagnosisManagement() {
               >
                 <Ionicons name="call-outline" size={22} color={theme.accent} />
                 <Text style={[styles.contactOptionText, { color: theme.textMain }]}>고객번호 수정</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.contactOption}
+                onPress={() => {
+                  const item = moreOptionsItem!;
+                  setMoreOptionsItem(null);
+                  setTimeout(() => openMemoEdit(item), 300);
+                }}
+              >
+                <Ionicons name="create-outline" size={22} color={theme.accent} />
+                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>진단사 메모</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.contactOption}
@@ -1105,6 +1142,46 @@ export default function DiagnosisManagement() {
                 disabled={contactSaving}
               >
                 {contactSaving
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
+                }
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <Modal visible={!!memoEditItem} transparent animationType="slide">
+          <Pressable style={styles.modalOverlay} onPress={() => setMemoEditItem(null)}>
+            <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]}>
+              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+              <Text style={[styles.modalTitle, { color: theme.textMain }]}>진단사 메모</Text>
+              <TextInput
+                value={memoEditValue}
+                onChangeText={setMemoEditValue}
+                placeholder="특이사항 등을 자유롭게 적어두세요"
+                placeholderTextColor={theme.textSub}
+                multiline
+                numberOfLines={5}
+                textAlignVertical="top"
+                autoFocus
+                style={{
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                  borderRadius: 10,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                  fontSize: 15,
+                  color: theme.textMain,
+                  marginTop: 8,
+                  minHeight: 120,
+                }}
+              />
+              <TouchableOpacity
+                style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
+                onPress={handleMemoSave}
+                disabled={memoSaving}
+              >
+                {memoSaving
                   ? <ActivityIndicator color="#fff" size="small" />
                   : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
                 }
