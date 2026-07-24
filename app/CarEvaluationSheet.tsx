@@ -71,6 +71,11 @@ const _G = {
 
 const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// 속도/안정성 비교 실험: 기존엔 동시 5개 병렬 업로드였는데, 한 번에 하나씩(싱글 I/O)
+// 순차 업로드로 바꿔서 현장 네트워크에서 더 안정적인지 테스트해보기 위해 1로 낮춤.
+// 병렬로 되돌리려면 이 값만 5로 복원하면 됨.
+const MAX_CONCURRENT_UPLOADS = 1;
+
 // 현장 네트워크가 불안정할 수 있어 업로드 실패 시 3회까지 재시도한다.
 // 그래도 실패하면 조용히 사라지지 않고 onFailed로 알려서 UI에서 재시도할 수 있게 한다.
 const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
@@ -116,7 +121,7 @@ const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
 };
 
 const _processQueue = () => {
-  while (_G.active < 5 && _G.queue.length > 0) {
+  while (_G.active < MAX_CONCURRENT_UPLOADS && _G.queue.length > 0) {
     const task = _G.queue.shift()!;
     _G.active++;
     _runTask(task).finally(() => {
@@ -296,6 +301,7 @@ export default function CarEvaluationSheet() {
   // ── 기타 메모 ────────────────────────────────────────────────────────────
   const [memo, setMemo] = useState("");
   const memoRef = useRef(""); // 타이핑 중 최신값 (state 업데이트 없이 추적)
+  const [memoHeight, setMemoHeight] = useState(100); // 줄바꿈 많은 입력도 잘리지 않게 내용에 맞춰 자동으로 늘어남
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce 타이머
 
   // ── 사이드 미러 마커 ──────────────────────────────────────────────────────
@@ -2565,7 +2571,7 @@ export default function CarEvaluationSheet() {
                 </Text>
               ) : (
                 <TextInput
-                  style={[styles.tArea, { marginTop: 8, height: 100 }]}
+                  style={[styles.tArea, { marginTop: 8, height: Math.max(100, memoHeight) }]}
                   placeholder="예) 정비 이력, 소모품 교환, 구조변경, 보증 연장, 블랙박스, 금연, 튜닝/아래는 도막,사고사진 등 그 외 첨부사진."
                   placeholderTextColor="#444"
                   multiline
@@ -2574,6 +2580,7 @@ export default function CarEvaluationSheet() {
                     memoRef.current = text;
                   }}
                   onBlur={() => setMemo(memoRef.current)}
+                  onContentSizeChange={(e) => setMemoHeight(e.nativeEvent.contentSize.height + 24)}
                 />
               )}
 
