@@ -53,6 +53,8 @@ if (!IS_EXPO_GO) {
 const { width: SCREEN_W } = Dimensions.get('window');
 const DRAWER_W = SCREEN_W * 0.72;
 
+const AM_TIMES = ['08:00', '09:00', '10:00', '11:00'];
+const PM_TIMES = ['12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
 const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 function formatPhone(raw?: string | null): string {
@@ -72,6 +74,15 @@ const toYMD = (d: Date) => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+};
+
+const getDateStrip = (count = 30) => {
+  const today = new Date();
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    return d;
+  });
 };
 
 const formatKoreanDate = (ymd: string) => {
@@ -291,6 +302,11 @@ export default function DiagnosisManagement() {
 
   const [filterDate, setFilterDate] = useState<string>('all');
 
+  const [timeChangeItem, setTimeChangeItem] = useState<DiagnosisItem | null>(null);
+  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState('');
+  const [timeChanging, setTimeChanging] = useState(false);
+
   const [moreOptionsItem, setMoreOptionsItem] = useState<DiagnosisItem | null>(null);
   const [cancelItem, setCancelItem] = useState<DiagnosisItem | null>(null);
   const [contactEditItem, setContactEditItem] = useState<DiagnosisItem | null>(null);
@@ -308,6 +324,8 @@ export default function DiagnosisManagement() {
   const [contactSaving, setContactSaving] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
+
+  const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
 
   // 근무시간(스케줄) 안이라도 원거리 이동 등으로 잠깐 자동배정·신규접수 알림에서 빠지고 싶을 때 끄는 스위치
   const handleToggleActive = useCallback(async () => {
@@ -491,6 +509,32 @@ export default function DiagnosisManagement() {
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
   }, [activeTab, currentDriverId, currentDriverName]);
+
+  const openTimeChange = (item: DiagnosisItem) => {
+    setTimeChangeItem(item);
+    const dt = item.preferredDateTime || '';
+    const parts = dt.split(' ');
+    const today = toYMD(new Date());
+    setSelectedDate(parts[0]?.match(/^\d{4}-\d{2}-\d{2}$/) ? parts[0] : today);
+    setSelectedTime(parts[1] || '');
+  };
+
+  const handleTimeChange = async () => {
+    if (!timeChangeItem || !newDateTime) {
+      Alert.alert('알림', '날짜와 시간을 모두 선택해주세요.');
+      return;
+    }
+    setTimeChanging(true);
+    try {
+      await axios.patch(`${API_BASE_URL}/external/request/${timeChangeItem.id}/status`, {
+        preferredDateTime: newDateTime,
+      });
+      Alert.alert('변경 완료', '예약 시간이 변경되었습니다.');
+      setTimeChangeItem(null);
+      fetchData();
+    } catch { Alert.alert('오류', '시간 변경에 실패했습니다.'); }
+    finally { setTimeChanging(false); }
+  };
 
   const handleClaim = async (requestId: number) => {
     try {
@@ -889,6 +933,87 @@ export default function DiagnosisManagement() {
           ) : null}
         />
 
+        <Modal visible={!!timeChangeItem} animationType="slide" transparent={false}>
+          <SafeAreaView style={[styles.timeModalSafe, { backgroundColor: theme.modalBg }]}>
+            <View style={styles.timeModalHeader}>
+              <TouchableOpacity onPress={() => setTimeChangeItem(null)} style={styles.timeModalClose}>
+                <Ionicons name="close" size={26} color={theme.textMain} />
+              </TouchableOpacity>
+              <Text style={[styles.timeModalTitle, { color: theme.textMain }]}>예약 시간 변경</Text>
+              <View style={{ width: 40 }} />
+            </View>
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.timeModalDateHeader}>
+                <Text style={[styles.timeModalDateText, { color: theme.textMain }]}>
+                  {selectedDate ? formatKoreanDate(selectedDate) : '날짜를 선택해 주세요.'}
+                </Text>
+                <Text style={[styles.timeModalSub, { color: theme.textSub }]}>
+                  {selectedDate ? '시간을 선택해 주세요.' : ''}
+                </Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeDateScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+                {getDateStrip(30).map(d => {
+                  const ymd = toYMD(d);
+                  const isSelected = selectedDate === ymd;
+                  const isToday = ymd === toYMD(new Date());
+                  return (
+                    <TouchableOpacity
+                      key={ymd}
+                      style={[styles.timeDateChip, { backgroundColor: isSelected ? theme.textMain : theme.timeSlotBg }]}
+                      onPress={() => setSelectedDate(ymd)}
+                    >
+                      <Text style={[styles.timeDateChipDay, { color: isSelected ? theme.modalBg : theme.textSub }]}>
+                        {isToday ? '오늘' : DAY_KO[d.getDay()]}
+                      </Text>
+                      <Text style={[styles.timeDateChipNum, { color: isSelected ? theme.modalBg : theme.textMain }]}>
+                        {d.getDate()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+              <View style={[styles.timeDivider, { backgroundColor: theme.border }]} />
+              <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오전</Text>
+              <View style={styles.timeGrid}>
+                {AM_TIMES.map(t => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.timeSlotBtn, { backgroundColor: selectedTime === t ? theme.textMain : theme.timeSlotBg }]}
+                    onPress={() => setSelectedTime(t)}
+                  >
+                    <Text style={[styles.timeSlotText, { color: selectedTime === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오후</Text>
+              <View style={styles.timeGrid}>
+                {PM_TIMES.map(t => (
+                  <TouchableOpacity
+                    key={t}
+                    style={[styles.timeSlotBtn, { backgroundColor: selectedTime === t ? theme.textMain : theme.timeSlotBg }]}
+                    onPress={() => setSelectedTime(t)}
+                  >
+                    <Text style={[styles.timeSlotText, { color: selectedTime === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={{ height: 120 }} />
+            </ScrollView>
+            <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
+              <TouchableOpacity
+                style={[styles.timeConfirmBtn, { backgroundColor: newDateTime ? theme.accent : (isDark ? '#333' : '#ddd') }]}
+                onPress={handleTimeChange}
+                disabled={!newDateTime || timeChanging}
+              >
+                {timeChanging
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Text style={[styles.timeConfirmText, { color: newDateTime ? '#fff' : theme.textSub }]}>변경하기</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </SafeAreaView>
+        </Modal>
+
         <Modal visible={isContactModalVisible || isNavModalVisible} transparent animationType="slide">
           <Pressable style={styles.modalOverlay} onPress={() => { setContactModalVisible(false); setNavModalVisible(false); }}>
             <View style={[styles.modalContent, { backgroundColor: theme.card }]}>
@@ -922,11 +1047,11 @@ export default function DiagnosisManagement() {
                 onPress={() => {
                   const item = moreOptionsItem!;
                   setMoreOptionsItem(null);
-                  setTimeout(() => openContactEdit(item), 300);
+                  setTimeout(() => openTimeChange(item), 300);
                 }}
               >
-                <Ionicons name="call-outline" size={22} color={theme.accent} />
-                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>고객번호 수정</Text>
+                <Ionicons name="time-outline" size={22} color={theme.accent} />
+                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>시간 변경</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.contactOption}
