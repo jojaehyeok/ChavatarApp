@@ -13,6 +13,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -1114,80 +1115,90 @@ export default function DiagnosisManagement() {
         </Modal>
 
         <Modal visible={!!contactEditItem} transparent animationType="slide">
-          <Pressable style={styles.modalOverlay} onPress={() => setContactEditItem(null)}>
-            <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]}>
-              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
-              <Text style={[styles.modalTitle, { color: theme.textMain }]}>고객번호 수정</Text>
-              <TextInput
-                value={contactEditValue}
-                onChangeText={setContactEditValue}
-                placeholder="예: 010-1234-5678"
-                placeholderTextColor={theme.textSub}
-                keyboardType="phone-pad"
-                autoFocus
-                style={{
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                  borderRadius: 10,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  fontSize: 16,
-                  color: theme.textMain,
-                  marginTop: 8,
-                }}
-              />
-              <TouchableOpacity
-                style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
-                onPress={handleContactSave}
-                disabled={contactSaving}
-              >
-                {contactSaving
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
-                }
-              </TouchableOpacity>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setContactEditItem(null)}>
+              <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]}>
+                <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+                <Text style={[styles.modalTitle, { color: theme.textMain }]}>고객번호 수정</Text>
+                <TextInput
+                  value={contactEditValue}
+                  onChangeText={setContactEditValue}
+                  placeholder="예: 010-1234-5678"
+                  placeholderTextColor={theme.textSub}
+                  keyboardType="phone-pad"
+                  autoFocus
+                  style={{
+                    borderWidth: 1,
+                    borderColor: theme.border,
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                    fontSize: 16,
+                    color: theme.textMain,
+                    marginTop: 8,
+                  }}
+                />
+                <TouchableOpacity
+                  style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
+                  onPress={handleContactSave}
+                  disabled={contactSaving}
+                >
+                  {contactSaving
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
+                  }
+                </TouchableOpacity>
+              </Pressable>
             </Pressable>
-          </Pressable>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal visible={!!memoEditItem} transparent animationType="slide">
-          <Pressable style={styles.modalOverlay} onPress={() => setMemoEditItem(null)}>
-            <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]}>
-              <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
-              <Text style={[styles.modalTitle, { color: theme.textMain }]}>진단사 메모</Text>
-              <TextInput
-                value={memoEditValue}
-                onChangeText={setMemoEditValue}
-                placeholder="특이사항 등을 자유롭게 적어두세요"
-                placeholderTextColor={theme.textSub}
-                multiline
-                numberOfLines={5}
-                textAlignVertical="top"
-                autoFocus
-                style={{
-                  borderWidth: 1,
-                  borderColor: theme.border,
-                  borderRadius: 10,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  fontSize: 15,
-                  color: theme.textMain,
-                  marginTop: 8,
-                  minHeight: 120,
-                }}
-              />
-              <TouchableOpacity
-                style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
-                onPress={handleMemoSave}
-                disabled={memoSaving}
-              >
-                {memoSaving
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
-                }
-              </TouchableOpacity>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setMemoEditItem(null)}>
+              <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]}>
+                <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+                <Text style={[styles.modalTitle, { color: theme.textMain }]}>진단사 메모</Text>
+                <TextInput
+                  value={memoEditValue}
+                  onChangeText={setMemoEditValue}
+                  placeholder="특이사항 등을 자유롭게 적어두세요"
+                  placeholderTextColor={theme.textSub}
+                  multiline
+                  numberOfLines={5}
+                  textAlignVertical="top"
+                  autoFocus
+                  style={{
+                    borderWidth: 1,
+                    borderColor: theme.border,
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                    fontSize: 15,
+                    color: theme.textMain,
+                    marginTop: 8,
+                    minHeight: 120,
+                  }}
+                />
+                <TouchableOpacity
+                  style={[styles.timeConfirmBtn, { backgroundColor: theme.accent, marginTop: 16 }]}
+                  onPress={handleMemoSave}
+                  disabled={memoSaving}
+                >
+                  {memoSaving
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={[styles.timeConfirmText, { color: '#fff' }]}>저장하기</Text>
+                  }
+                </TouchableOpacity>
+              </Pressable>
             </Pressable>
-          </Pressable>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal visible={!!requestInfoItem} transparent animationType="slide">
