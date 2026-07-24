@@ -141,11 +141,12 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
   const today = new Date();
   const todayYmd = toYMD(today);
 
-  // 이번 주(일~토)에 해당하는 날짜만 칩으로 표시
+  // 오늘부터 7일간(캘린더상 "이번주 일~토"가 아니라 오늘 기준 롤링 윈도우) 칩으로 표시 —
+  // 예전엔 일~토 고정 주간이라, 예를 들어 금요일에 보면 모레(일요일)가 "다음주"로 취급되어
+  // 목록에 실제 예약이 있는데도 칩에서 통째로 빠지는 버그가 있었음
   const weekStart = new Date(today);
-  weekStart.setDate(today.getDate() - today.getDay());
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
+  const weekEnd = new Date(today);
+  weekEnd.setDate(today.getDate() + 6);
   const weekStartYmd = toYMD(weekStart);
   const weekEndYmd = toYMD(weekEnd);
   const thisWeekDates = upcomingDates.filter(ymd => ymd >= weekStartYmd && ymd <= weekEndYmd);
