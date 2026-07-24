@@ -383,6 +383,10 @@ export default function CarEvaluationSheet() {
   const pendingResults = useRef<{ uri: string; s3url: string; cat: string }[]>([]);
   const resultFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestUploadCount = useRef(0);
+
+  // "전체 초기화" 시점에 아직 업로드 중이던(로컬 URI만 있고 S3 URL이 없던) 사진들의 uri 모음.
+  // 초기화 이후에 뒤늦게 업로드가 끝나도 화면에 되살아나지 않게 막고, 그 S3 파일도 바로 지운다.
+  const discardedUris = useRef<Set<string>>(new Set());
   const countFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -394,8 +398,21 @@ export default function CarEvaluationSheet() {
       pendingResults.current = [];
       if (batch.length === 0) return;
 
-      const extraMemoBatch = batch.filter((b) => b.cat === "extra_memo");
-      const normalBatch = batch.filter((b) => b.cat !== "extra_memo");
+      // "전체 초기화" 이후 뒤늦게 완료된 업로드는 화면에 되살리지 않고, 방금 올라간
+      // S3 파일도 바로 지워서 고아 파일로 안 남게 한다.
+      const discarded = batch.filter((b) => discardedUris.current.has(b.uri));
+      if (discarded.length > 0) {
+        discarded.forEach((b) => discardedUris.current.delete(b.uri));
+        discarded.forEach((b) => {
+          fetch(`${API_BASE_URL}/external/inspection/upload?url=${encodeURIComponent(b.s3url)}`, {
+            method: "DELETE",
+          }).catch(() => {});
+        });
+      }
+      const live = batch.filter((b) => !discarded.includes(b));
+
+      const extraMemoBatch = live.filter((b) => b.cat === "extra_memo");
+      const normalBatch = live.filter((b) => b.cat !== "extra_memo");
 
       if (extraMemoBatch.length > 0) {
         setExtraPhotos((prev) => {
@@ -468,6 +485,11 @@ export default function CarEvaluationSheet() {
     // 3회 재시도 후에도 실패하면 조용히 사라지지 않고 재시도 버튼으로 노출한다
     // (사진이 조용히 유실되는 것보다 눈에 보이는 실패가 훨씬 낫다).
     _G.onFailed = (task) => {
+      // "전체 초기화"로 이미 버려진 사진이면 실패 재시도 UI에 다시 띄우지 않는다
+      if (discardedUris.current.has(task.uri)) {
+        discardedUris.current.delete(task.uri);
+        return;
+      }
       if (task.categoryId === "extra_memo") {
         setExtraPhotos((prev) => prev.filter((img) => img !== task.uri));
       } else {
@@ -1406,9 +1428,12 @@ export default function CarEvaluationSheet() {
           text: "전체 삭제",
           style: "destructive",
           onPress: async () => {
-            const urls = POOL_CATEGORY_IDS.flatMap(
-              (id) => images[id] || [],
-            ).filter((url) => url.startsWith("http"));
+            const all = POOL_CATEGORY_IDS.flatMap((id) => images[id] || []);
+            const urls = all.filter((url) => url.startsWith("http"));
+            // 아직 업로드 중이라 로컬 URI 그대로인 것들은 지금은 지울 S3 URL이 없다 —
+            // 나중에 업로드가 뒤늦게 끝나도 화면에 되살아나지 않고 그 S3 파일도 바로
+            // 지워지도록 표시해둔다(flushResults/onFailed에서 처리)
+            all.filter((url) => !url.startsWith("http")).forEach((uri) => discardedUris.current.add(uri));
             await Promise.all(
               urls.map((url) =>
                 fetch(
