@@ -71,10 +71,11 @@ const _G = {
 
 const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// 속도/안정성 비교 실험: 기존엔 동시 5개 병렬 업로드였는데, 한 번에 하나씩(싱글 I/O)
-// 순차 업로드로 바꿔서 현장 네트워크에서 더 안정적인지 테스트해보기 위해 1로 낮춤.
-// 병렬로 되돌리려면 이 값만 5로 복원하면 됨.
-const MAX_CONCURRENT_UPLOADS = 1;
+// 실측(50장): 병렬 5개는 19.3초·순서역전 12회, 싱글 I/O는 46.5초·역전 0회였는데,
+// 역전의 진짜 원인은 동시성 자체가 아니라 flushResults가 완료된 사진을 "끝에 추가"하던
+// 방식이었음 — 선택 시점에 이미 놓인 자리에 그대로 바꿔치기하도록 고쳐서 병렬로도 순서가
+// 항상 보존되므로 다시 5로 되돌림.
+const MAX_CONCURRENT_UPLOADS = 5;
 
 // 현장 네트워크가 불안정할 수 있어 업로드 실패 시 3회까지 재시도한다.
 // 그래도 실패하면 조용히 사라지지 않고 onFailed로 알려서 UI에서 재시도할 수 있게 한다.
@@ -409,13 +410,23 @@ export default function CarEvaluationSheet() {
         setImages((prev) => {
           const updated = { ...prev };
           normalBatch.forEach(({ uri, s3url, cat }) => {
-            // 모든 카테고리에서 로컬 URI 제거 (AI가 카테고리 바꿔도 원본 제거)
+            // 선택한 순간 이미 해당 카테고리의 정확한 위치에 로컬 URI가 놓여 있으므로,
+            // 업로드가 어떤 순서로 끝나든 "그 자리"에서 S3 URL로 바꿔치기만 하면 순서가
+            // 항상 선택 순서 그대로 유지된다(병렬 업로드로 완료 순서가 뒤섞여도 무관).
+            const idx = (updated[cat] || []).indexOf(uri);
+            if (idx !== -1) {
+              const arr = [...updated[cat]];
+              arr[idx] = s3url;
+              updated[cat] = arr;
+              return;
+            }
+            // 드문 예외: AI 재분류 등으로 카테고리가 실제로 바뀐 경우만 기존 자리에서
+            // 제거하고 새 카테고리 맨 뒤에 추가(이 경우엔 위치 보존이 원래 불가능)
             for (const key of Object.keys(updated)) {
               if (updated[key].includes(uri)) {
                 updated[key] = updated[key].filter((img) => img !== uri);
               }
             }
-            // 최종 카테고리에 S3 URL 추가
             updated[cat] = [...(updated[cat] || []), s3url];
           });
           return updated;
