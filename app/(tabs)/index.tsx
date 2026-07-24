@@ -273,6 +273,7 @@ export default function DiagnosisManagement() {
   };
 
   const [activeTab, setActiveTab] = useState<'upcoming' | 'request' | 'completed'>('upcoming');
+  const [requestCount, setRequestCount] = useState(0);
   const [menuVisible, setMenuVisible] = useState(false);
   const drawerAnim = useRef(new Animated.Value(DRAWER_W)).current;
 
@@ -506,9 +507,17 @@ export default function DiagnosisManagement() {
       const normalizeDt = (dt: string) => (dt || '').replace('T', ' ');
       filtered.sort((a, b) => normalizeDt(a.preferredDateTime).localeCompare(normalizeDt(b.preferredDateTime)));
       setData(filtered);
+
+      // "예약 요청" 탭 뱃지용 카운트 — 지금 보고 있는 탭이 뭐든 상관없이 항상 최신으로 유지
+      const canSeeRoundingForBadge = driverTier === 'certified' || driverTier === 'agent';
+      const requestTabCount = allData.filter(item => {
+        if (item.source?.startsWith('self-')) return false;
+        return item.status === 'PENDING' || (item.roundingRequested && canSeeRoundingForBadge);
+      }).length;
+      setRequestCount(requestTabCount);
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [activeTab, currentDriverId, currentDriverName]);
+  }, [activeTab, currentDriverId, currentDriverName, driverTier]);
 
   const openTimeChange = (item: DiagnosisItem) => {
     setTimeChangeItem(item);
@@ -865,9 +874,16 @@ export default function DiagnosisManagement() {
               onPress={() => { setActiveTab(tab); setFilterDate('all'); }}
               style={[styles.tabItem, activeTab === tab && { borderBottomColor: isDark ? theme.accent : '#000', borderBottomWidth: 2 }]}
             >
-              <Text style={[styles.tabText, { color: activeTab === tab ? theme.textMain : theme.textSub }]}>
-                {tab === 'upcoming' ? '다가오는 예약' : tab === 'request' ? '예약 요청' : '완료된 예약'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.tabText, { color: activeTab === tab ? theme.textMain : theme.textSub }]}>
+                  {tab === 'upcoming' ? '다가오는 예약' : tab === 'request' ? '예약 요청' : '완료된 예약'}
+                </Text>
+                {tab === 'request' && requestCount > 0 && (
+                  <View style={styles.tabBadge}>
+                    <Text style={styles.tabBadgeText}>{requestCount > 99 ? '99+' : requestCount}</Text>
+                  </View>
+                )}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -1339,6 +1355,11 @@ const styles = StyleSheet.create({
   tabBar: { flexDirection: 'row', borderBottomWidth: 1 },
   tabItem: { flex: 1, alignItems: 'center', paddingVertical: 15 },
   tabText: { fontSize: 15, fontWeight: 'bold' },
+  tabBadge: {
+    marginLeft: 5, minWidth: 18, height: 18, borderRadius: 9,
+    backgroundColor: '#e53e3e', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+  },
+  tabBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
 
   dateStripScroll: { height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
