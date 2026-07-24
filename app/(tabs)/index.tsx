@@ -111,6 +111,7 @@ interface DiagnosisItem {
   assignedByAgentId?: string | null;
   roundingRequested?: boolean;
   driverMemo?: string | null;
+  isUrgent?: boolean;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -905,6 +906,11 @@ export default function DiagnosisManagement() {
           }
           renderItem={({ item }) => (
             <View style={[styles.card, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
+              {item.isUrgent && (
+                <View style={styles.urgentBadge}>
+                  <Text style={styles.urgentBadgeText}>🚨 긴급·당일배정</Text>
+                </View>
+              )}
               <View style={styles.cardHeader}>
                 <Text style={[styles.cardTitle, { color: theme.textMain }]}>{item.carModel || '차량 정보 없음'}</Text>
                 {activeTab === 'upcoming'
@@ -1365,6 +1371,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#e53e3e', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
   },
   tabBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  urgentBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#e53e3e', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  urgentBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 
   dateStripScroll: { height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
