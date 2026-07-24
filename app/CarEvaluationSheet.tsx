@@ -2451,9 +2451,12 @@ export default function CarEvaluationSheet() {
                         multiline
                         value={item.val}
                         onChangeText={item.setVal}
-                        onContentSizeChange={(e) =>
-                          setChecklistFieldHeights((prev) => ({ ...prev, [idx]: e.nativeEvent.contentSize.height + 24 }))
-                        }
+                        onContentSizeChange={(e) => {
+                          const h = e?.nativeEvent?.contentSize?.height;
+                          if (h != null) {
+                            setChecklistFieldHeights((prev) => ({ ...prev, [idx]: h + 24 }));
+                          }
+                        }}
                       />
                     )}
                   </View>
@@ -2627,7 +2630,10 @@ export default function CarEvaluationSheet() {
                     memoRef.current = text;
                   }}
                   onBlur={() => setMemo(memoRef.current)}
-                  onContentSizeChange={(e) => setMemoHeight(e.nativeEvent.contentSize.height + 24)}
+                  onContentSizeChange={(e) => {
+                    const h = e?.nativeEvent?.contentSize?.height;
+                    if (h != null) setMemoHeight(h + 24);
+                  }}
                 />
               )}
 
