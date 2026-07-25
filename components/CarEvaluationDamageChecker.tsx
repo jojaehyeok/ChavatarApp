@@ -56,6 +56,25 @@ const CHECK_POSITIONS = [
   { x: 992.15,  y: 3764.23 },
 ];
 
+// 화면에 그려지는 SVG 도면 자체는 항상 원본 비율 그대로 두고, 유독 빽빽하게
+// 몰려있는 두 구간(앞쪽 인사이드패널/사이드멤버/휠하우스 6개, 뒷쪽 휠하우스/
+// 사이드멤버/트렁크플로어 5개)만 그 구간의 가로 중심을 기준으로 원(터치 영역)
+// 위치를 옆으로 밀어서 벌린다 — 도면 배경은 절대 손대지 않으므로 찌그러지거나
+// 잘리는 부작용이 없다.
+const SPREAD_GROUPS: { indices: number[]; centerX: number; factor: number }[] = [
+  { indices: [21, 22, 23, 24, 25, 26], centerX: 983, factor: 1.45 },
+  { indices: [31, 32, 33, 34, 35], centerX: 987.15, factor: 1.35 },
+];
+
+const spreadX = (index: number, x: number): number => {
+  for (const group of SPREAD_GROUPS) {
+    if (group.indices.includes(index)) {
+      return group.centerX + (x - group.centerX) * group.factor;
+    }
+  }
+  return x;
+};
+
 // ─── 탭 사이클: 빈칸 → X(교환) → B(판금) → W(용접) → 빈칸 ──────────────────
 const CYCLE = [
   { symbol: null, label: '',  bgColor: 'rgba(255,255,255,0.08)', border: 'rgba(255,255,255,0.35)' },
@@ -83,15 +102,6 @@ const MAX_ZOOM = 3;
 // 작아져서 탭이 어렵다는 얘기가 많았음) — 실제 원 크기는 그대로 두고 탭 판정 영역만 넓힌다
 const MIN_HIT_SLOP = 6;
 
-// 하부(언더캐리지) 도면 중에서도 진짜 겹치는 건 인사이드패널/사이드멤버/휠하우스가
-// 한 줄에 4~5개씩 몰린 부분(index 21~)뿐이었음 — 라디에이터서포트(19)·프런트패널(20)은
-// 원래도 한 줄에 하나씩이라 넓힐 필요가 없음. SVG 원본에서 라벨 좌표를 직접 확인함
-// (라디에이터서포트 텍스트 y=2190, 프런트패널 텍스트 y=2324, 인사이드패널 텍스트 y=2457) —
-// 그 사이 빈 공간인 y=2400에서 잘라야 어느 라벨도 안 걸린다.
-const Y_SPLIT = 2400;
-const BOTTOM_WIDEN = 1.3;
-const TOP_COUNT = 21;
-
 interface Props {
   checkedDamages: string[][];
   onChange?: (index: number, symbols: string[]) => void;
@@ -110,12 +120,6 @@ function CarEvaluationDamageChecker({
   const widthRatio      = screenWidth / ORIGINAL_WIDTH;
   const heightRatio     = containerHeight / ORIGINAL_HEIGHT;
   const boxSize         = widthRatio * 165; // 130 -> 165, 원이 작다는 피드백으로 확대
-
-  const topHeight    = Y_SPLIT * heightRatio;
-  const bottomHeight = containerHeight - topHeight;
-  const bottomWidenWidth = screenWidth * BOTTOM_WIDEN;
-  const bottomWidthRatio = bottomWidenWidth / ORIGINAL_WIDTH;
-  const bottomLeftOffset = -(bottomWidenWidth - screenWidth) / 2;
 
   const handleTap = (index: number) => {
     const current   = checkedDamages[index]?.[0] ?? null;
@@ -172,46 +176,6 @@ function CarEvaluationDamageChecker({
     ],
   }));
 
-  const renderBox = (index: number, left: number, top: number) => {
-    const current   = checkedDamages[index]?.[0] ?? null;
-    const state     = CYCLE[symbolToIndex(current)];
-    const hasSymbol = !!state.symbol;
-
-    return (
-      <TouchableOpacity
-        key={index}
-        disabled={readonly}
-        onPress={() => handleTap(index)}
-        hitSlop={{ top: MIN_HIT_SLOP, bottom: MIN_HIT_SLOP, left: MIN_HIT_SLOP, right: MIN_HIT_SLOP }}
-        style={[
-          styles.checkBox,
-          {
-            left,
-            top,
-            width:           boxSize,
-            height:          boxSize,
-            borderRadius:    boxSize / 2,
-            borderColor:     state.border,
-            backgroundColor: state.bgColor,
-          },
-        ]}
-      >
-        {hasSymbol ? (
-          <Text style={[
-            styles.symbolText,
-            { color: SYMBOL_TEXT_COLOR[state.symbol!], fontSize: boxSize * 0.52 },
-          ]}>
-            {state.label}
-          </Text>
-        ) : (
-          <Text style={[styles.emptyText, { fontSize: boxSize * 0.3 }]}>
-            {index + 1}
-          </Text>
-        )}
-      </TouchableOpacity>
-    );
-  };
-
   return (
     <View>
       {!readonly && (
@@ -225,25 +189,50 @@ function CarEvaluationDamageChecker({
       <View style={{ width: screenWidth, height: containerHeight, overflow: 'hidden' }}>
         <GestureDetector gesture={zoomGesture}>
           <Animated.View style={[{ width: screenWidth, height: containerHeight }, animatedZoomStyle]}>
-            {/* ── 위쪽: 차량 외관(곡선 위주) — 기존 비율 그대로 ── */}
-            <View style={{ width: screenWidth, height: topHeight, overflow: 'hidden' }}>
-              <EvaluationSvg width={screenWidth} height={containerHeight} />
-              {CHECK_POSITIONS.slice(0, TOP_COUNT).map((pos, i) =>
-                renderBox(i, widthRatio * pos.x, heightRatio * pos.y),
-              )}
-            </View>
+            {/* ── SVG 배경: 항상 원본 그대로, 한 번만 렌더 ── */}
+            <EvaluationSvg width={screenWidth} height={containerHeight} />
 
-            {/* ── 아래쪽: 하부(언더캐리지) — 세로 비율은 유지하고 가로만 넓혀서 간격 확보 ── */}
-            <View style={{ width: screenWidth, height: bottomHeight, overflow: 'hidden' }}>
-              <View style={{ width: bottomWidenWidth, height: containerHeight, marginLeft: bottomLeftOffset, marginTop: -topHeight }}>
-                <EvaluationSvg width={bottomWidenWidth} height={containerHeight} preserveAspectRatio="none" />
-                {/* marginTop:-topHeight가 이 래퍼(SVG+원 전부)를 이미 통째로 밀어올리므로,
-                    원 좌표는 잘라내지 않은 전체 이미지 기준 그대로 써야 SVG와 안 어긋난다 */}
-                {CHECK_POSITIONS.slice(TOP_COUNT).map((pos, i) =>
-                  renderBox(TOP_COUNT + i, bottomWidthRatio * pos.x, heightRatio * pos.y),
-                )}
-              </View>
-            </View>
+            {/* ── 손상 체크 박스들 ── */}
+            {CHECK_POSITIONS.map((pos, index) => {
+              const current   = checkedDamages[index]?.[0] ?? null;
+              const state     = CYCLE[symbolToIndex(current)];
+              const hasSymbol = !!state.symbol;
+              const adjustedX = spreadX(index, pos.x);
+
+              return (
+                <TouchableOpacity
+                  key={index}
+                  disabled={readonly}
+                  onPress={() => handleTap(index)}
+                  hitSlop={{ top: MIN_HIT_SLOP, bottom: MIN_HIT_SLOP, left: MIN_HIT_SLOP, right: MIN_HIT_SLOP }}
+                  style={[
+                    styles.checkBox,
+                    {
+                      left:            widthRatio * adjustedX,
+                      top:             heightRatio * pos.y,
+                      width:           boxSize,
+                      height:          boxSize,
+                      borderRadius:    boxSize / 2,
+                      borderColor:     state.border,
+                      backgroundColor: state.bgColor,
+                    },
+                  ]}
+                >
+                  {hasSymbol ? (
+                    <Text style={[
+                      styles.symbolText,
+                      { color: SYMBOL_TEXT_COLOR[state.symbol!], fontSize: boxSize * 0.52 },
+                    ]}>
+                      {state.label}
+                    </Text>
+                  ) : (
+                    <Text style={[styles.emptyText, { fontSize: boxSize * 0.3 }]}>
+                      {index + 1}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
           </Animated.View>
         </GestureDetector>
       </View>
