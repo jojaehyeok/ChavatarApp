@@ -323,6 +323,10 @@ export default function CarEvaluationSheet() {
   // 복원이 끝난 뒤 이 값을 바꿔서 TextInput을 한 번 강제로 다시 마운트시켜 반영한다.
   const [dataLoaded, setDataLoaded] = useState(false);
   const memoRef = useRef(""); // 타이핑 중 최신값 (state 업데이트 없이 추적)
+  // onBlur나 뒤로가기 버튼 탭에만 저장을 의존하면, 시스템/제스처 뒤로가기처럼
+  // 그 핸들러를 아예 안 타는 경로로 나갈 때 저장이 안 되고 사라짐 — 어떻게 나가든
+  // 안전하도록 타이핑 멈추면 알아서 백그라운드 저장되게 별도 디바운스 타이머를 둔다
+  const memoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [memoHeight, setMemoHeight] = useState(100); // 줄바꿈 많은 입력도 잘리지 않게 내용에 맞춰 자동으로 늘어남
   // 확인사항(경고등/옵션/누유/주행중 이상)의 상세 입력창도 동일하게 내용에 맞춰 늘어나도록 —
   // idx별로 따로 관리(항목마다 길이가 다를 수 있음)
@@ -2674,6 +2678,10 @@ export default function CarEvaluationSheet() {
                   defaultValue={memo}
                   onChangeText={(text) => {
                     memoRef.current = text;
+                    if (memoSaveTimerRef.current) clearTimeout(memoSaveTimerRef.current);
+                    memoSaveTimerRef.current = setTimeout(() => {
+                      saveData();
+                    }, 1000);
                   }}
                   onBlur={() => setMemo(memoRef.current)}
                   onContentSizeChange={(e) => {
