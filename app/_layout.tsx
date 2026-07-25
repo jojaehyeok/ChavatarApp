@@ -1,15 +1,55 @@
 import { useColorScheme } from '@/components/useColorScheme';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useLocationTracking } from '@/hooks/useLocationTracking';
+import { API_BASE_URL } from '@/constants/api';
 
-// 1. 에러 바운더리 수출 (Expo Router 필수)
-export { ErrorBoundary } from 'expo-router';
+// 1. 에러 바운더리 — 화면이 꺼졌다 켜졌다 하는 것처럼 보이는 크래시 루프 등을
+// 남의 폰에서는 직접 확인이 안 되니, 잡히는 즉시 서버(client-error-logs)로도
+// 보고해서 GET으로 원격 조회 가능하게 한다(기본 expo-router ErrorBoundary는
+// 화면에만 보여주고 서버 보고는 안 함).
+export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
+  const pathname = usePathname();
+  useEffect(() => {
+    (async () => {
+      const driverId = await AsyncStorage.getItem('driverId').catch(() => null);
+      fetch(`${API_BASE_URL}/client-error-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driverId: driverId || undefined,
+          screen: `global-error-boundary:${pathname}`,
+          message: `${error?.message}\n${error?.stack || ''}`.slice(0, 2000),
+        }),
+      }).catch(() => {});
+    })();
+  }, [error]);
+
+  return (
+    <View style={errorStyles.container}>
+      <Text style={errorStyles.title}>문제가 발생했습니다</Text>
+      <Text style={errorStyles.message}>{error?.message}</Text>
+      <TouchableOpacity style={errorStyles.retryBtn} onPress={retry}>
+        <Text style={errorStyles.retryText}>다시 시도</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const errorStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  title: { color: '#fff', fontSize: 20, fontWeight: '700', marginBottom: 12 },
+  message: { color: '#aaa', fontSize: 13, textAlign: 'center', marginBottom: 24 },
+  retryBtn: { backgroundColor: '#fff', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10 },
+  retryText: { color: '#000', fontWeight: '700' },
+});
 
 // 2. 초기 라우트 설정
 export const unstable_settings = {
