@@ -17,19 +17,21 @@ import { API_BASE_URL } from '@/constants/api';
 // 화면에만 보여주고 서버 보고는 안 함).
 export function ErrorBoundary({ error, retry }: { error: Error; retry: () => void }) {
   const pathname = usePathname();
+  // 전역 자동 서버 보고는 일단 꺼둠 — 전체 진단사 대상으로 켜두니 흔한/사소한 에러까지
+  // 다 쌓여서 노이즈가 됨. 특정 진단사가 문제를 얘기하면 그때 필요한 범위로 다시 켤 것.
   useEffect(() => {
-    (async () => {
-      const driverId = await AsyncStorage.getItem('driverId').catch(() => null);
-      fetch(`${API_BASE_URL}/client-error-logs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          driverId: driverId || undefined,
-          screen: `global-error-boundary:${pathname}`,
-          message: `${error?.message}\n${error?.stack || ''}`.slice(0, 2000),
-        }),
-      }).catch(() => {});
-    })();
+    // (async () => {
+    //   const driverId = await AsyncStorage.getItem('driverId').catch(() => null);
+    //   fetch(`${API_BASE_URL}/client-error-logs`, {
+    //     method: 'POST',
+    //     headers: { 'Content-Type': 'application/json' },
+    //     body: JSON.stringify({
+    //       driverId: driverId || undefined,
+    //       screen: `global-error-boundary:${pathname}`,
+    //       message: `${error?.message}\n${error?.stack || ''}`.slice(0, 2000),
+    //     }),
+    //   }).catch(() => {});
+    // })();
   }, [error]);
 
   return (
