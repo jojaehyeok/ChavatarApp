@@ -146,7 +146,8 @@ const DAMAGE_BOX_COUNT = { INSPECTION_DELIVERY: 35, EVALUATION_DELIVERY: 37 };
 // 차량 상태 심볼 목록
 const EXTERIOR_SYMBOLS = [
   { symbol: "X", meaning: "교환" },
-  { symbol: "W", meaning: "판금/도장" },
+  { symbol: "W", meaning: "용접" },
+  { symbol: "B", meaning: "판금" },
   { symbol: "M", meaning: "탈부착/조정" },
   { symbol: "A", meaning: "흠집" },
   { symbol: "U", meaning: "요철" },
@@ -229,6 +230,20 @@ export default function CarEvaluationSheet() {
   // 간편신청(B2B)에서 "미정"으로 접수된 차량번호/차주 성함을 평가사가 현장에서 알게 되면
   // 여기서 바로 고칠 수 있게 한다 — 로컬 상태로 시작해서 이후 모든 곳(업로드/제출 등)에
   // 이 값을 그대로 쓰도록 route param을 초기값으로만 쓰는 로컬 state로 바꿨다.
+  // 사진 표시(도형/펜/블러) 기능은 아직 다듬는 중이라 에이전트 등급 계정에만 우선 노출
+  const [isAgentTier, setIsAgentTier] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const driverId = await AsyncStorage.getItem("driverId");
+      if (!driverId) return;
+      try {
+        const res = await fetch(`${API_BASE_URL}/drivers/${driverId}`);
+        const data = await res.json();
+        setIsAgentTier(data?.tier === "agent");
+      } catch (_) {}
+    })();
+  }, []);
+
   const [carNumber, setCarNumber] = useState(String(carNumberParam || ""));
   const [carOwner, setCarOwner] = useState("");
   const [carModel, setCarModel] = useState(String(carModelParam || ""));
@@ -1704,6 +1719,10 @@ export default function CarEvaluationSheet() {
               />
               <Text style={styles.uploadBadgeText}>{uploadPending}</Text>
             </View>
+          ) : !isViewMode && !isPractice ? (
+            <TouchableOpacity onPress={handleTempSave} style={{ paddingHorizontal: 4, paddingVertical: 6 }}>
+              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>임시저장</Text>
+            </TouchableOpacity>
           ) : (
             <View style={{ width: 48 }} />
           )}
@@ -1924,7 +1943,7 @@ export default function CarEvaluationSheet() {
                 return (
                   <TouchableOpacity
                     onPress={() => togglePickerAsset(item.id)}
-                    onLongPress={() => setAnnotatorTarget(item)}
+                    onLongPress={isAgentTier ? () => setAnnotatorTarget(item) : undefined}
                     style={styles.pickerThumbWrap}
                   >
                     <Image
@@ -1951,7 +1970,9 @@ export default function CarEvaluationSheet() {
                 );
               }}
             />
-            <Text style={styles.pickerHint}>사진을 꾹 누르면 도형/펜/블러로 표시할 수 있습니다</Text>
+            {isAgentTier && (
+              <Text style={styles.pickerHint}>사진을 꾹 누르면 도형/펜/블러로 표시할 수 있습니다</Text>
+            )}
 
             {/* 하단 등록 버튼 */}
             {pickerSelected.size > 0 && (
