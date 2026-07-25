@@ -83,6 +83,17 @@ const MAX_ZOOM = 3;
 // 작아져서 탭이 어렵다는 얘기가 많았음) — 실제 원 크기는 그대로 두고 탭 판정 영역만 넓힌다
 const MIN_HIT_SLOP = 6;
 
+// 하부(언더캐리지) 도면은 원본 좌표부터 폭이 좁게 몰려있어서(인사이드패널/사이드멤버/휠하우스가
+// 한 줄에 4~5개씩) 화면 폭에 맞춰 축소되면 원끼리 겹쳐 라벨도 안 보일 정도였음.
+// 위쪽 차량 외관 도면(곡선 위주)은 그대로 두고, 아래쪽만 가로로만 넓혀서(세로 비율은 유지)
+// 간격을 벌린다. 처음엔 y=2000에서 잘랐더니 위쪽 도면 그림이 경계선을 넘어가 있어서
+// 이음새가 찌그러져 보였음 — index 19(라디에이터서포트, y=2101.36)가 하부 도면의
+// 진짜 시작점이라 그 앞에 여유를 두고 y=2160으로 내려서 위쪽 그림이 완전히 끝난
+// 뒤에서 자르도록 수정.
+const Y_SPLIT = 2160;
+const BOTTOM_WIDEN = 1.3;
+const TOP_COUNT = 19;
+
 interface Props {
   checkedDamages: string[][];
   onChange?: (index: number, symbols: string[]) => void;
@@ -102,6 +113,12 @@ function CarEvaluationDamageChecker({
   const heightRatio     = containerHeight / ORIGINAL_HEIGHT;
   const boxSize         = widthRatio * 165; // 130 -> 165, 원이 작다는 피드백으로 확대
 
+  const topHeight    = Y_SPLIT * heightRatio;
+  const bottomHeight = containerHeight - topHeight;
+  const bottomWidenWidth = screenWidth * BOTTOM_WIDEN;
+  const bottomWidthRatio = bottomWidenWidth / ORIGINAL_WIDTH;
+  const bottomLeftOffset = -(bottomWidenWidth - screenWidth) / 2;
+
   const handleTap = (index: number) => {
     const current   = checkedDamages[index]?.[0] ?? null;
     const nextIndex = (symbolToIndex(current) + 1) % CYCLE.length;
@@ -109,9 +126,7 @@ function CarEvaluationDamageChecker({
     onChange?.(index, nextSymbol ? [nextSymbol] : []);
   };
 
-  // 좁은 화면에서 겹쳐 보이는 하부(언더캐리지) 쪽 원들을 옆으로 늘려서 벌려봤더니
-  // 도면 이음새가 찌그러져 보인다는 피드백이 있어서 원상복구 — 대신 두 손가락 핀치줌으로
-  // 확대해서 정확한 위치를 누를 수 있게 하는 쪽으로 해결한다(도면 비율은 항상 원본 그대로).
+  // 두 손가락 핀치로 전체를 추가로 확대할 수도 있게 남겨둔다(정밀 탭 보조용)
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -159,6 +174,46 @@ function CarEvaluationDamageChecker({
     ],
   }));
 
+  const renderBox = (index: number, left: number, top: number) => {
+    const current   = checkedDamages[index]?.[0] ?? null;
+    const state     = CYCLE[symbolToIndex(current)];
+    const hasSymbol = !!state.symbol;
+
+    return (
+      <TouchableOpacity
+        key={index}
+        disabled={readonly}
+        onPress={() => handleTap(index)}
+        hitSlop={{ top: MIN_HIT_SLOP, bottom: MIN_HIT_SLOP, left: MIN_HIT_SLOP, right: MIN_HIT_SLOP }}
+        style={[
+          styles.checkBox,
+          {
+            left,
+            top,
+            width:           boxSize,
+            height:          boxSize,
+            borderRadius:    boxSize / 2,
+            borderColor:     state.border,
+            backgroundColor: state.bgColor,
+          },
+        ]}
+      >
+        {hasSymbol ? (
+          <Text style={[
+            styles.symbolText,
+            { color: SYMBOL_TEXT_COLOR[state.symbol!], fontSize: boxSize * 0.52 },
+          ]}>
+            {state.label}
+          </Text>
+        ) : (
+          <Text style={[styles.emptyText, { fontSize: boxSize * 0.3 }]}>
+            {index + 1}
+          </Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <View>
       {!readonly && (
@@ -172,49 +227,25 @@ function CarEvaluationDamageChecker({
       <View style={{ width: screenWidth, height: containerHeight, overflow: 'hidden' }}>
         <GestureDetector gesture={zoomGesture}>
           <Animated.View style={[{ width: screenWidth, height: containerHeight }, animatedZoomStyle]}>
-            {/* ── SVG 배경 ── */}
-            <EvaluationSvg width={screenWidth} height={containerHeight} />
+            {/* ── 위쪽: 차량 외관(곡선 위주) — 기존 비율 그대로 ── */}
+            <View style={{ width: screenWidth, height: topHeight, overflow: 'hidden' }}>
+              <EvaluationSvg width={screenWidth} height={containerHeight} />
+              {CHECK_POSITIONS.slice(0, TOP_COUNT).map((pos, i) =>
+                renderBox(i, widthRatio * pos.x, heightRatio * pos.y),
+              )}
+            </View>
 
-            {/* ── 손상 체크 박스들 ── */}
-            {CHECK_POSITIONS.map((pos, index) => {
-              const current   = checkedDamages[index]?.[0] ?? null;
-              const state     = CYCLE[symbolToIndex(current)];
-              const hasSymbol = !!state.symbol;
-
-              return (
-                <TouchableOpacity
-                  key={index}
-                  disabled={readonly}
-                  onPress={() => handleTap(index)}
-                  hitSlop={{ top: MIN_HIT_SLOP, bottom: MIN_HIT_SLOP, left: MIN_HIT_SLOP, right: MIN_HIT_SLOP }}
-                  style={[
-                    styles.checkBox,
-                    {
-                      left:            widthRatio * pos.x,
-                      top:             heightRatio * pos.y,
-                      width:           boxSize,
-                      height:          boxSize,
-                      borderRadius:    boxSize / 2,
-                      borderColor:     state.border,
-                      backgroundColor: state.bgColor,
-                    },
-                  ]}
-                >
-                  {hasSymbol ? (
-                    <Text style={[
-                      styles.symbolText,
-                      { color: SYMBOL_TEXT_COLOR[state.symbol!], fontSize: boxSize * 0.52 },
-                    ]}>
-                      {state.label}
-                    </Text>
-                  ) : (
-                    <Text style={[styles.emptyText, { fontSize: boxSize * 0.3 }]}>
-                      {index + 1}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+            {/* ── 아래쪽: 하부(언더캐리지) — 세로 비율은 유지하고 가로만 넓혀서 간격 확보 ── */}
+            <View style={{ width: screenWidth, height: bottomHeight, overflow: 'hidden' }}>
+              <View style={{ width: bottomWidenWidth, height: containerHeight, marginLeft: bottomLeftOffset, marginTop: -topHeight }}>
+                <EvaluationSvg width={bottomWidenWidth} height={containerHeight} preserveAspectRatio="none" />
+                {/* marginTop:-topHeight가 이 래퍼(SVG+원 전부)를 이미 통째로 밀어올리므로,
+                    원 좌표는 잘라내지 않은 전체 이미지 기준 그대로 써야 SVG와 안 어긋난다 */}
+                {CHECK_POSITIONS.slice(TOP_COUNT).map((pos, i) =>
+                  renderBox(TOP_COUNT + i, bottomWidthRatio * pos.x, heightRatio * pos.y),
+                )}
+              </View>
+            </View>
           </Animated.View>
         </GestureDetector>
       </View>
