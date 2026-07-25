@@ -100,7 +100,7 @@ function CarEvaluationDamageChecker({
   const containerHeight = (ORIGINAL_HEIGHT / ORIGINAL_WIDTH) * screenWidth;
   const widthRatio      = screenWidth / ORIGINAL_WIDTH;
   const heightRatio     = containerHeight / ORIGINAL_HEIGHT;
-  const boxSize         = widthRatio * 130;
+  const boxSize         = widthRatio * 165; // 130 -> 165, 원이 작다는 피드백으로 확대
 
   const handleTap = (index: number) => {
     const current   = checkedDamages[index]?.[0] ?? null;
