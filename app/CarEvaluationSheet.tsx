@@ -317,6 +317,11 @@ export default function CarEvaluationSheet() {
 
   // ── 기타 메모 ────────────────────────────────────────────────────────────
   const [memo, setMemo] = useState("");
+  // 기타의견 TextInput은 defaultValue(비제어)를 쓰는데, 이건 "최초 마운트 시점" 값만
+  // 반영하고 이후 memo state가 바뀌어도 화면엔 반영이 안 됨 — loadSavedData/loadEditData가
+  // 마운트 후 비동기로 저장된 memo를 복원해도 입력창엔 안 보이던 버그의 원인이었음.
+  // 복원이 끝난 뒤 이 값을 바꿔서 TextInput을 한 번 강제로 다시 마운트시켜 반영한다.
+  const [dataLoaded, setDataLoaded] = useState(false);
   const memoRef = useRef(""); // 타이핑 중 최신값 (state 업데이트 없이 추적)
   const [memoHeight, setMemoHeight] = useState(100); // 줄바꿈 많은 입력도 잘리지 않게 내용에 맞춰 자동으로 늘어남
   // 확인사항(경고등/옵션/누유/주행중 이상)의 상세 입력창도 동일하게 내용에 맞춰 늘어나도록 —
@@ -730,6 +735,8 @@ export default function CarEvaluationSheet() {
       setEvaluationStarted(true);
     } catch (e) {
       console.error("Edit data load error:", e);
+    } finally {
+      setDataLoaded(true);
     }
   };
 
@@ -896,6 +903,8 @@ export default function CarEvaluationSheet() {
       }
     } catch (e) {
       console.error("Load Error", e);
+    } finally {
+      setDataLoaded(true);
     }
   };
 
@@ -2654,6 +2663,10 @@ export default function CarEvaluationSheet() {
                 </Text>
               ) : (
                 <TextInput
+                  // defaultValue는 최초 마운트 시점 값만 반영하고 이후 memo가 바뀌어도
+                  // 화면에 안 나타남 — 저장된 내용 복원(loadSavedData/loadEditData, 비동기)이
+                  // 끝난 뒤 key를 바꿔 강제로 다시 마운트시켜서 복원된 값이 실제로 보이게 한다
+                  key={dataLoaded ? "memo-loaded" : "memo-loading"}
                   style={[styles.tArea, { marginTop: 8, height: Math.max(100, memoHeight) }]}
                   placeholder="예) 정비 이력, 소모품 교환, 구조변경, 보증 연장, 블랙박스, 금연, 튜닝/아래는 도막,사고사진 등 그 외 첨부사진."
                   placeholderTextColor="#444"
