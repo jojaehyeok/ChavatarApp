@@ -816,7 +816,10 @@ export default function CarEvaluationSheet() {
         leakDesc,
         optionsDesc,
         driveDesc,
-        memo,
+        // memo state는 onBlur 시에만 갱신되는데, 뒤로가기 등으로 blur가 안 일어난 채
+        // 저장이 트리거되면 방금 타이핑한 내용이 아니라 그 전 값으로 덮어써서 사라져
+        // 보이는 버그가 있었음 — 항상 최신인 memoRef를 우선 사용
+        memo: memoRef.current || memo,
         mirrorMarkers,
         checkedDamages,
         extraPhotos,
@@ -1069,12 +1072,6 @@ export default function CarEvaluationSheet() {
       console.error(e);
       Alert.alert("오류", "전송 중 문제가 발생했습니다.");
     }
-  };
-
-  // ─── 임시저장 ─────────────────────────────────────────────────────────────
-  const handleTempSave = async () => {
-    await saveData();
-    Alert.alert("임시저장", "내용이 임시저장되었습니다.");
   };
 
   // ─── 커스텀 앨범 피커 함수 ────────────────────────────────────────────────
@@ -1676,29 +1673,20 @@ export default function CarEvaluationSheet() {
         {/* 네비게이션 헤더 */}
         <View style={styles.navHeader}>
           <TouchableOpacity
-            onPress={() => {
+            onPress={async () => {
               if (isPractice) {
                 // 연습 모드는 저장할 게 없으니 묻지 않고, 지금까지의 임시저장도 지운다
                 AsyncStorage.removeItem(STORAGE_KEY);
                 router.back();
-              } else if (!isViewMode && evaluationStarted) {
-                Alert.alert("뒤로 가기", "임시저장 후 나가시겠습니까?", [
-                  {
-                    text: "저장 후 나가기",
-                    onPress: async () => {
-                      await saveData();
-                      router.back();
-                    },
-                  },
-                  {
-                    text: "저장하지 않고 나가기",
-                    style: "destructive",
-                    onPress: () => router.back(),
-                  },
-                ]);
-              } else {
-                router.back();
+                return;
               }
+              // 확인창 없이 조용히 백그라운드로 저장 — 예전엔 evaluationStarted(평가
+              // 시작 버튼을 눌렀는지)일 때만 저장을 시도해서, 시작 전에 기타의견 등을
+              // 적고 바로 뒤로가면 저장이 아예 안 되고 사라지는 버그가 있었음
+              if (!isViewMode) {
+                await saveData();
+              }
+              router.back();
             }}
           >
             <Ionicons name="chevron-back" size={24} color="#fff" />
@@ -1719,10 +1707,6 @@ export default function CarEvaluationSheet() {
               />
               <Text style={styles.uploadBadgeText}>{uploadPending}</Text>
             </View>
-          ) : !isViewMode && !isPractice ? (
-            <TouchableOpacity onPress={handleTempSave} style={{ paddingHorizontal: 4, paddingVertical: 6 }}>
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>임시저장</Text>
-            </TouchableOpacity>
           ) : (
             <View style={{ width: 48 }} />
           )}

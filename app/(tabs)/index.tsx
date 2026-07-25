@@ -13,6 +13,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Modal,
@@ -629,6 +630,9 @@ export default function DiagnosisManagement() {
 
   const handleContactSave = async () => {
     if (!contactEditItem) return;
+    // 키보드가 열린 채로 모달을 바로 닫으면 키보드 닫힘 애니메이션과 모달 닫힘
+    // 애니메이션이 동시에 겹치면서 화면이 깜빡이는 것처럼 보임 — 먼저 닫아둔다
+    Keyboard.dismiss();
     setContactSaving(true);
     try {
       await axios.patch(`${API_BASE_URL}/external/request/${contactEditItem.id}/status`, {
@@ -651,6 +655,9 @@ export default function DiagnosisManagement() {
 
   const handleMemoSave = async () => {
     if (!memoEditItem) return;
+    // 키보드가 열린 채로 모달을 바로 닫으면 키보드 닫힘 애니메이션과 모달 닫힘
+    // 애니메이션이 동시에 겹치면서 화면이 깜빡이는 것처럼 보임 — 먼저 닫아둔다
+    Keyboard.dismiss();
     setMemoSaving(true);
     try {
       await axios.patch(`${API_BASE_URL}/external/request/${memoEditItem.id}/status`, {
@@ -864,7 +871,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.3.22</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.3.23</Text>
               </View>
             </Animated.View>
           </Pressable>
