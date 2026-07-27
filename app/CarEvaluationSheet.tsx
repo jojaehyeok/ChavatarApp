@@ -257,6 +257,17 @@ export default function CarEvaluationSheet() {
   const [regImage, setRegImage] = useState<string | null>(null); // 자동차등록증
   const [vinImage, setVinImage] = useState<string | null>(null); // 차대번호(라벨)
 
+  // 확인사항(경고등/옵션/누유/주행중 이상/엔진룸 이상) 항목별 첨부사진 — "기타의견" 사진첩과 안 섞이게
+  // 항목별로 따로 관리, 각 항목당 최대 3장
+  const MAX_CHECKLIST_PHOTOS = 3;
+  const [checklistPhotos, setChecklistPhotos] = useState<Record<string, string[]>>({
+    warning: [],
+    options: [],
+    leak: [],
+    drive: [],
+    engine: [],
+  });
+
   // 1. 상단에 추가할 상태값 (컴포넌트 내부)
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
 
@@ -296,10 +307,12 @@ export default function CarEvaluationSheet() {
   const [showLeak, setShowLeak] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showDrive, setShowDrive] = useState(false);
+  const [showEngine, setShowEngine] = useState(false);
   const [warningDesc, setWarningDesc] = useState("");
   const [leakDesc, setLeakDesc] = useState("");
   const [optionsDesc, setOptionsDesc] = useState("");
   const [driveDesc, setDriveDesc] = useState("");
+  const [engineDesc, setEngineDesc] = useState("");
 
   // ── 기타 메모 ────────────────────────────────────────────────────────────
   const [memo, setMemo] = useState("");
@@ -693,6 +706,8 @@ export default function CarEvaluationSheet() {
       );
       setShowDrive(ev.driveDesc && ev.driveDesc !== "이상 없음");
       setDriveDesc(ev.driveDesc !== "이상 없음" ? (ev.driveDesc ?? "") : "");
+      setShowEngine(ev.engineDesc && ev.engineDesc !== "이상 없음");
+      setEngineDesc(ev.engineDesc !== "이상 없음" ? (ev.engineDesc ?? "") : "");
       setMemo(ev.memo ?? "");
 
       // 이미지
@@ -700,6 +715,7 @@ export default function CarEvaluationSheet() {
       setDashboardImage(imgs.dashboard?.[0] ?? null);
       setRegImage(imgs.registration?.[0] ?? null);
       setVinImage(imgs.vin?.[0] ?? null);
+      setChecklistPhotos(d.checklistPhotos || { warning: [], options: [], leak: [], drive: [], engine: [] });
       setImages({
         exterior: imgs.exterior ?? [],
         wheel: imgs.wheel ?? [],
@@ -757,6 +773,7 @@ export default function CarEvaluationSheet() {
     dashboardImage,
     regImage,
     vinImage,
+    checklistPhotos,
     images,
     mileage,
     color,
@@ -774,10 +791,12 @@ export default function CarEvaluationSheet() {
     showLeak,
     showOptions,
     showDrive,
+    showEngine,
     warningDesc,
     leakDesc,
     optionsDesc,
     driveDesc,
+    engineDesc,
     mirrorMarkers,
     checkedDamages,
     extraPhotos,
@@ -792,6 +811,7 @@ export default function CarEvaluationSheet() {
         dashboardImage,
         regImage,
         vinImage,
+        checklistPhotos,
         images,
         mileage,
         color,
@@ -809,10 +829,12 @@ export default function CarEvaluationSheet() {
         showLeak,
         showOptions,
         showDrive,
+        showEngine,
         warningDesc,
         leakDesc,
         optionsDesc,
         driveDesc,
+        engineDesc,
         // memo state는 onBlur 시에만 갱신되는데, 뒤로가기 등으로 blur가 안 일어난 채
         // 저장이 트리거되면 방금 타이핑한 내용이 아니라 그 전 값으로 덮어써서 사라져
         // 보이는 버그가 있었음 — 항상 최신인 memoRef를 우선 사용
@@ -837,6 +859,7 @@ export default function CarEvaluationSheet() {
         setDashboardImage(p.dashboardImage || null);
         setRegImage(p.regImage || null);
         setVinImage(p.vinImage || null);
+        setChecklistPhotos(p.checklistPhotos || { warning: [], options: [], leak: [], drive: [], engine: [] });
         setImages(
           p.images || {
             exterior: [],
@@ -865,10 +888,12 @@ export default function CarEvaluationSheet() {
         setShowLeak(p.showLeak || false);
         setShowOptions(p.showOptions || false);
         setShowDrive(p.showDrive || false);
+        setShowEngine(p.showEngine || false);
         setWarningDesc(p.warningDesc || "");
         setLeakDesc(p.leakDesc || "");
         setOptionsDesc(p.optionsDesc || "");
         setDriveDesc(p.driveDesc || "");
+        setEngineDesc(p.engineDesc || "");
         setMemo(p.memo || "");
         setExtraPhotos(p.extraPhotos || []);
         setMirrorMarkers(
@@ -922,6 +947,85 @@ export default function CarEvaluationSheet() {
     }
   };
 
+  // ─── 확인사항 항목별 사진(경고등/옵션/누유/주행중 이상, 각 최대 3장) ───────────────
+  const pickChecklistPhoto = async (photoKey: string) => {
+    const already = checklistPhotos[photoKey]?.length || 0;
+    const remaining = MAX_CHECKLIST_PHOTOS - already;
+    if (remaining <= 0) return;
+
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      selectionLimit: remaining,
+      quality: 0.3,
+    });
+
+    if (result.canceled) return;
+    const newUris = result.assets.map((a) => a.uri).slice(0, remaining);
+    setChecklistPhotos((prev) => ({
+      ...prev,
+      [photoKey]: [...(prev[photoKey] || []), ...newUris].slice(0, MAX_CHECKLIST_PHOTOS),
+    }));
+    newUris.forEach((uri) => uploadChecklistPhoto(uri, photoKey));
+  };
+
+  const uploadChecklistPhoto = async (uri: string, photoKey: string, attempt = 1) => {
+    if (isPractice) return;
+    try {
+      const formData = new FormData();
+      const fileName = `checklist_${photoKey}_${Date.now()}.jpg`;
+
+      // @ts-ignore
+      formData.append("file", {
+        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
+        name: fileName,
+        type: "image/jpeg",
+      });
+      formData.append("requestId", String(requestId || ""));
+      formData.append("category", `checklist_${photoKey}`);
+      formData.append("carNumber", String(carNumber || "미등록"));
+
+      const res = await fetch(`${API_BASE_URL}/external/inspection/upload`, {
+        method: "POST",
+        body: formData,
+        headers: { Accept: "application/json" },
+      });
+
+      if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+      const result = await res.json();
+      if (result.url) {
+        setChecklistPhotos((prev) => {
+          const arr = prev[photoKey] || [];
+          const idx = arr.indexOf(uri);
+          if (idx === -1) return prev;
+          const next = [...arr];
+          next[idx] = result.url;
+          return { ...prev, [photoKey]: next };
+        });
+      }
+    } catch (e) {
+      console.error("🔥 Upload Error (Checklist Photo):", e);
+      if (attempt < 3) {
+        setTimeout(() => uploadChecklistPhoto(uri, photoKey, attempt + 1), 1500 * attempt);
+        return;
+      }
+      Alert.alert("업로드 실패", "사진 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+    }
+  };
+
+  const removeChecklistPhoto = (photoKey: string, index: number) => {
+    setChecklistPhotos((prev) => ({
+      ...prev,
+      [photoKey]: (prev[photoKey] || []).filter((_, i) => i !== index),
+    }));
+  };
+
   // 3. 사진 삭제 함수
   const removeExtraPhoto = (index: number) => {
     setExtraPhotos(extraPhotos.filter((_, i) => i !== index));
@@ -952,6 +1056,14 @@ export default function CarEvaluationSheet() {
     }
 
     // 평가 완료 단계
+    // 간편신청(B2B)에서 "미정"으로 접수된 채 현장에서 못 채워넣고 그대로 완료해버리는
+    // 사고를 막는다 — 차량번호/차주성함/차량명은 리포트의 기본 식별정보라 비어있으면 안 됨.
+    // 알림창으로만 알리면 평가사가 어디를 고쳐야 하는지 다시 찾아야 해서, 아예 차량정보
+    // 수정창을 바로 띄워 포커싱시킨다.
+    if (!carNumber || carNumber === "미정" || !carOwner || !carModel) {
+      openCarEdit();
+      return;
+    }
     if (!mileage) {
       Alert.alert("알림", "주행거리를 입력해주세요.");
       return;
@@ -997,6 +1109,13 @@ export default function CarEvaluationSheet() {
         dashboardImage: onlyS3([dashboardImage || ""])[0] || null,
         regImage: onlyS3([regImage || ""])[0] || null,
         vinImage: onlyS3([vinImage || ""])[0] || null,
+        checklistPhotos: {
+          warning: onlyS3(checklistPhotos.warning || []),
+          options: onlyS3(checklistPhotos.options || []),
+          leak: onlyS3(checklistPhotos.leak || []),
+          drive: onlyS3(checklistPhotos.drive || []),
+          engine: onlyS3(checklistPhotos.engine || []),
+        },
         // 차키
         keys: {
           smart: smartKey,
@@ -1031,6 +1150,7 @@ export default function CarEvaluationSheet() {
           leakDesc: showLeak ? leakDesc : "이상 없음",
           optionsDesc: showOptions ? optionsDesc : "이상 없음",
           driveDesc: showDrive ? driveDesc : "이상 없음",
+          engineDesc: showEngine ? engineDesc : "이상 없음",
         },
         memo: memoRef.current || memo, // onBlur 전 제출 시에도 최신값 반영
       };
@@ -2046,7 +2166,14 @@ export default function CarEvaluationSheet() {
             </View>
 
             {carEditVisible && (
-              <Modal transparent animationType="fade" onRequestClose={() => setCarEditVisible(false)}>
+              <Modal transparent animationType="fade" onRequestClose={saveCarInfo}>
+                {/* Modal은 부모의 KeyboardAvoidingView 밖(별도 네이티브 창)에 렌더되므로
+                    여기서 다시 감싸주지 않으면 키보드가 열렸을 때 차량명 입력칸이
+                    키보드에 가려도 그대로 방치된다 — 평가사 피드백으로 발견된 버그. */}
+                <KeyboardAvoidingView
+                  behavior={Platform.OS === "ios" ? "padding" : "height"}
+                  style={{ flex: 1 }}
+                >
                 <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }}>
                   <View style={{ backgroundColor: "#181818", borderRadius: 16, padding: 20 }}>
                     <Text style={{ color: "#fff", fontSize: 16, fontWeight: "bold", marginBottom: 16 }}>
@@ -2093,6 +2220,7 @@ export default function CarEvaluationSheet() {
                     </View>
                   </View>
                 </View>
+                </KeyboardAvoidingView>
               </Modal>
             )}
 
@@ -2412,6 +2540,7 @@ export default function CarEvaluationSheet() {
                 val: warningDesc,
                 setVal: setWarningDesc,
                 placeholder: "경고 내용을 입력하세요",
+                photoKey: "warning",
               },
               {
                 label: "옵션 기능 작동 이상",
@@ -2420,6 +2549,7 @@ export default function CarEvaluationSheet() {
                 val: optionsDesc,
                 setVal: setOptionsDesc,
                 placeholder: "고장 옵션을 입력하세요",
+                photoKey: "options",
               },
               ...(!isInspection
                 ? [
@@ -2430,6 +2560,7 @@ export default function CarEvaluationSheet() {
                       val: leakDesc,
                       setVal: setLeakDesc,
                       placeholder: "누유 부위를 입력하세요",
+                      photoKey: "leak",
                     },
                   ]
                 : []),
@@ -2440,6 +2571,16 @@ export default function CarEvaluationSheet() {
                 val: driveDesc,
                 setVal: setDriveDesc,
                 placeholder: "증상 내용을 입력하세요",
+                photoKey: "drive",
+              },
+              {
+                label: "엔진룸 이상",
+                state: showEngine,
+                setState: setShowEngine,
+                val: engineDesc,
+                setVal: setEngineDesc,
+                placeholder: "이상 내용을 입력하세요",
+                photoKey: "engine",
               },
             ].map((item, idx) => (
               <View key={idx}>
@@ -2487,6 +2628,52 @@ export default function CarEvaluationSheet() {
                         }}
                       />
                     )}
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
+                      {(checklistPhotos[item.photoKey] || []).map((uri, photoIdx) => {
+                        const isUploading = !isPractice && !uri.startsWith("http");
+                        return (
+                          <View key={`${uri}-${photoIdx}`} style={styles.photoWrapperGrid}>
+                            <TouchableOpacity
+                              style={styles.photoItemGrid}
+                              onPress={() => {
+                                if (isUploading) return;
+                                setViewerImages([uri]);
+                                setViewerIndex(0);
+                                setViewerVisible(true);
+                              }}
+                              disabled={isUploading}
+                            >
+                              {isUploading ? (
+                                <View style={[styles.photoItemGrid, { justifyContent: "center", alignItems: "center", backgroundColor: "#111" }]}>
+                                  <ActivityIndicator size="small" color="#999" />
+                                </View>
+                              ) : (
+                                <Image source={{ uri }} style={styles.photoItemGrid} />
+                              )}
+                            </TouchableOpacity>
+                            {!isViewMode && (
+                              <TouchableOpacity
+                                style={styles.removeBadgeGrid}
+                                onPress={() => removeChecklistPhoto(item.photoKey, photoIdx)}
+                              >
+                                <Ionicons name="close-circle" size={22} color="#ff4d4d" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        );
+                      })}
+                      {!isViewMode && (checklistPhotos[item.photoKey]?.length || 0) < MAX_CHECKLIST_PHOTOS && (
+                        <View style={styles.photoWrapperGrid}>
+                          <TouchableOpacity
+                            style={[styles.photoItemGrid, styles.gridAddBtn]}
+                            onPress={() => pickChecklistPhoto(item.photoKey)}
+                          >
+                            <Ionicons name="camera" size={22} color="#666" />
+                            <Text style={styles.gridAddText}>사진추가</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
                   </View>
                 )}
               </View>

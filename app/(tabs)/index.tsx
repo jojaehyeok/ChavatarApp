@@ -54,8 +54,20 @@ if (!IS_EXPO_GO) {
 const { width: SCREEN_W } = Dimensions.get('window');
 const DRAWER_W = SCREEN_W * 0.72;
 
-const AM_TIMES = ['08:00', '09:00', '10:00', '11:00'];
-const PM_TIMES = ['12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00'];
+// 30분 단위로 08:00~11:30(오전), 12:00~22:00(오후) 슬롯 생성.
+// includeEndHalf=true면 endHour:30까지(오전 마지막 11:30), false면 endHour:00에서 끊음(오후 마지막 22:00, 22:30은 없음)
+const buildHalfHourSlots = (startHour: number, endHour: number, includeEndHalf: boolean): string[] => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const slots: string[] = [];
+  for (let h = startHour; h < endHour; h++) {
+    slots.push(`${pad(h)}:00`, `${pad(h)}:30`);
+  }
+  slots.push(`${pad(endHour)}:00`);
+  if (includeEndHalf) slots.push(`${pad(endHour)}:30`);
+  return slots;
+};
+const AM_TIMES = buildHalfHourSlots(8, 11, true);
+const PM_TIMES = buildHalfHourSlots(12, 22, false);
 const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 function formatPhone(raw?: string | null): string {
@@ -99,6 +111,8 @@ interface DiagnosisItem {
   carNumber: string;
   carModel?: string;
   dealerName?: string | null;
+  dealerContact?: string | null;
+  listingUrl?: string | null;
   contact?: string;
   customerContact?: string | null;
   address: string;
@@ -114,6 +128,7 @@ interface DiagnosisItem {
   driverMemo?: string | null;
   adminMemo?: string | null;
   isUrgent?: boolean;
+  isExportBooking?: boolean;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -769,7 +784,7 @@ export default function DiagnosisManagement() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '' } })}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '' } })}
           >
             <Text style={{ color: isDark ? '#000' : '#fff', fontWeight: 'bold' }}>진단 시작</Text>
           </TouchableOpacity>
@@ -795,14 +810,14 @@ export default function DiagnosisManagement() {
         <View style={styles.btnGroup}>
           <TouchableOpacity
             style={[styles.subBtn, { flex: canEdit ? 1 : undefined, width: canEdit ? undefined : '100%', backgroundColor: theme.buttonSub }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view' } })}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view', isExportBooking: item.isExportBooking ? '1' : '' } })}
           >
             <Text style={[styles.subBtnText, { color: theme.textSub }]}>진단 내역 보기</Text>
           </TouchableOpacity>
           {canEdit && (
             <TouchableOpacity
               style={[styles.subBtn, { flex: 1, backgroundColor: theme.accent }]}
-              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit' } })}
+              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit', isExportBooking: item.isExportBooking ? '1' : '' } })}
             >
               <Text style={[styles.subBtnText, { color: '#fff' }]}>수정하기</Text>
             </TouchableOpacity>
@@ -871,7 +886,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.3.37</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.5</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -917,6 +932,11 @@ export default function DiagnosisManagement() {
               {item.isUrgent && (
                 <View style={styles.urgentBadge}>
                   <Text style={styles.urgentBadgeText}>🚨 긴급·당일배정</Text>
+                </View>
+              )}
+              {item.isExportBooking && (
+                <View style={styles.exportBadge}>
+                  <Text style={styles.exportBadgeText}>🚢 수출건</Text>
                 </View>
               )}
               <View style={styles.cardHeader}>
@@ -1244,6 +1264,24 @@ export default function DiagnosisManagement() {
                 {requestInfoItem?.dealerName || '없음'}
               </Text>
 
+              {!!requestInfoItem?.dealerContact && (
+                <>
+                  <Text style={[styles.label, { marginTop: 4 }]}>딜러 연락처</Text>
+                  <Text style={{ fontSize: 15, color: theme.textMain, marginTop: 2, marginBottom: 12 }}>
+                    {requestInfoItem.dealerContact}
+                  </Text>
+                </>
+              )}
+
+              {!!requestInfoItem?.listingUrl && (
+                <>
+                  <Text style={[styles.label, { marginTop: 4 }]}>매물 링크</Text>
+                  <Text style={{ fontSize: 14, color: theme.textMain, marginTop: 2, marginBottom: 12 }}>
+                    {requestInfoItem.listingUrl}
+                  </Text>
+                </>
+              )}
+
               <Text style={[styles.label, { marginTop: 4 }]}>방문일시</Text>
               <Text style={{ fontSize: 15, color: theme.textMain, marginTop: 2, marginBottom: 12 }}>
                 {requestInfoItem?.preferredDateTime}
@@ -1392,6 +1430,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
   },
   urgentBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  exportBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#b45309', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  exportBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 
   dateStripScroll: { height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
