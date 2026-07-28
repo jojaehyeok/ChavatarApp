@@ -107,6 +107,10 @@ const formatKoreanDate = (ymd: string) => {
 interface DiagnosisItem {
   id: string | number;
   status: string;
+  // 계좌이체 신청 건은 status가 PENDING이어도 관리자가 입금 확인하기 전까진(false)
+  // 진단사한테 "예약 요청"으로 노출되면 안 됨 — 카드결제 등은 항상 true
+  depositConfirmed?: boolean;
+  paymentMethod?: string | null;
   carOwner: string;
   carNumber: string;
   carModel?: string;
@@ -517,7 +521,9 @@ export default function DiagnosisManagement() {
         const isAgentAssignedByMe = String(item.assignedByAgentId) === String(currentDriverId);
         // 진단/에이전트 등급은 다른 평가사가 올린 라운딩 요청을 예약 요청 탭에서 함께 확인 가능
         const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
-        if (activeTab === 'request') return item.status === 'PENDING' || (item.roundingRequested && canSeeRounding);
+        // 계좌이체 입금 미확인 건(depositConfirmed === false)은 관리자가 확인하기 전까지
+        // "예약 요청" 탭에서 숨김 — 아직 진단사가 볼 필요 없는 건임
+        if (activeTab === 'request') return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRounding);
         if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
         return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
       });
@@ -531,7 +537,7 @@ export default function DiagnosisManagement() {
       const canSeeRoundingForBadge = driverTier === 'certified' || driverTier === 'agent';
       const requestTabCount = allData.filter(item => {
         if (item.source?.startsWith('self-')) return false;
-        return item.status === 'PENDING' || (item.roundingRequested && canSeeRoundingForBadge);
+        return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRoundingForBadge);
       }).length;
       setRequestCount(requestTabCount);
     } catch (error) { console.error(error); }
