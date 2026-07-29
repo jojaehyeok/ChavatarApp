@@ -19,7 +19,7 @@ import { API_BASE_URL } from '../constants/api';
 // 등급별 기본 진단비(원) — 대시보드 booking-list.tsx의 BASE_FEE_BY_TIER와 동일하게 유지
 const BASE_FEE_BY_TIER: Record<string, number> = { general: 50000, certified: 60000, agent: 65000 };
 
-interface CompletedItem {
+interface RawBooking {
   id: string | number;
   carNumber: string;
   carModel?: string;
@@ -33,14 +33,22 @@ interface CompletedItem {
   claimDeduction?: number | null;
   source?: string;
   isExportBooking?: boolean;
+  agentBonus?: number | null;
+  agentBonusMemo?: string | null;
+}
+
+// kind: 'diagnosis' — 본인이 직접 진단한 건(기본 진단비 대상)
+//       'management' — 에이전트 본인이 다른 평가사에게 지정 배정만 한 건(관리수당만 대상)
+interface SettlementRow extends RawBooking {
+  kind: 'diagnosis' | 'management';
 }
 
 const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, '0')}`;
 
 // 수출건/구매동행(개인거래)은 현장에서 바로 입금해드려서 이 정산에 다시 잡으면 중복이라 0원 처리 —
 // 대신 왜 0원인지 알 수 있게 라벨을 보여준다.
-const isDirectPaidBooking = (item: CompletedItem) => !!item.isExportBooking || item.source === 'CARVIOR_INSPECTION';
-const directPaidLabel = (item: CompletedItem) => item.isExportBooking ? '🚢 수출건 · 직접지급 완료' : '🧑 구매동행(개인거래) · 직접지급 완료';
+const isDirectPaidBooking = (item: RawBooking) => !!item.isExportBooking || item.source === 'CARVIOR_INSPECTION';
+const directPaidLabel = (item: RawBooking) => item.isExportBooking ? '🚢 수출건 · 직접지급 완료' : '🧑 구매동행(개인거래) · 직접지급 완료';
 
 export default function SettlementHistoryScreen() {
   const router = useRouter();
@@ -57,7 +65,7 @@ export default function SettlementHistoryScreen() {
   const now = new Date();
   const [loading, setLoading] = useState(true);
   const [baseFee, setBaseFee] = useState(0);
-  const [byMonth, setByMonth] = useState<Map<string, CompletedItem[]>>(new Map());
+  const [byMonth, setByMonth] = useState<Map<string, SettlementRow[]>>(new Map());
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1); // 1~12
 
@@ -78,20 +86,24 @@ export default function SettlementHistoryScreen() {
       const tier: string | undefined = driverRes?.data?.tier;
       setBaseFee(tier ? (BASE_FEE_BY_TIER[tier] ?? 0) : 0);
 
-      // "완료된 예약" 탭과 달리 정산은 실제로 진단을 수행한 사람 기준이어야 함 —
-      // 에이전트가 다른 평가사에게 지정 배정만 한 건(assignedByAgentId)은 리포트는
-      // 에이전트도 수정할 수 있지만, 정산/지급은 실제 배정된 평가사 몫이라 제외한다.
-      const completed = (all || []).filter(item => {
+      // "완료된 예약" 탭과 달리 정산은 실제 수행자 기준(diagnosis)과 배정 관리자 기준(management)을
+      // 구분해서 잡아야 함 — 한 건이 두 조건에 동시에 해당하면(자기 자신에게 지정배정한 특수 케이스)
+      // 이중 계상을 막기 위해 diagnosis를 우선한다.
+      const rows: SettlementRow[] = [];
+      (all || []).forEach(item => {
+        if (item.status !== 'COMPLETED') return;
         const isMy = String(item.assignedDriverId) === String(driverId) || item.assignedDriverName === driverName;
-        return item.status === 'COMPLETED' && isMy;
+        const isManagedByMe = String(item.assignedByAgentId) === String(driverId);
+        if (isMy) rows.push({ ...item, kind: 'diagnosis' });
+        else if (isManagedByMe) rows.push({ ...item, kind: 'management' });
       });
 
       // 완료된 예약 탭과 동일하게 최근에 완료한 건이 위로 오도록 정렬
-      const completedTime = (item: CompletedItem) => item.firstCompletedAt || item.completedAt || item.updatedAt || item.preferredDateTime;
-      completed.sort((a, b) => (completedTime(b) || '').localeCompare(completedTime(a) || ''));
+      const completedTime = (item: RawBooking) => item.firstCompletedAt || item.completedAt || item.updatedAt || item.preferredDateTime;
+      rows.sort((a, b) => (completedTime(b) || '').localeCompare(completedTime(a) || ''));
 
-      const grouped = new Map<string, CompletedItem[]>();
-      completed.forEach(item => {
+      const grouped = new Map<string, SettlementRow[]>();
+      rows.forEach(item => {
         const dt = completedTime(item) || '';
         if (dt.length < 7) return;
         const month = dt.slice(0, 7);
@@ -126,11 +138,14 @@ export default function SettlementHistoryScreen() {
 
   const data = useMemo(() => byMonth.get(monthKey(viewYear, viewMonth)) ?? [], [byMonth, viewYear, viewMonth]);
   const itemFeeOf = useCallback(
-    (item: CompletedItem) => isDirectPaidBooking(item) ? 0 : baseFee + (item.remoteBonus || 0) + (item.extraFee || 0),
+    (item: SettlementRow) => {
+      if (item.kind === 'management') return item.agentBonus || 0;
+      return isDirectPaidBooking(item) ? 0 : baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
+    },
     [baseFee],
   );
   const feeTotal = useMemo(() => data.reduce((sum, item) => sum + itemFeeOf(item), 0), [data, itemFeeOf]);
-  const claimTotal = useMemo(() => data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0), [data]);
+  const claimTotal = useMemo(() => data.reduce((sum, item) => sum + (item.kind === 'diagnosis' ? (item.claimDeduction || 0) : 0), 0), [data]);
   const netTotal = feeTotal - claimTotal;
 
   return (
@@ -138,11 +153,11 @@ export default function SettlementHistoryScreen() {
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       <View style={[s.header, { borderBottomColor: border }]}>
+        <View style={{ width: 40 }} />
+        <Text style={[s.headerTitle, { color: text }]}>정산 내역</Text>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Ionicons name="close" size={26} color={text} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: text }]}>정산 내역</Text>
-        <View style={{ width: 40 }} />
       </View>
 
       {/* 월 이동 — < 2026년 7월 > */}
@@ -165,7 +180,7 @@ export default function SettlementHistoryScreen() {
           <View style={[s.sectionHeader, { backgroundColor: bg, borderBottomColor: border }]}>
             <Text style={[s.sectionHeaderText, { color: accent }]}>{data.length}건</Text>
             <View style={s.sectionTotals}>
-              <Text style={[s.sectionTotalText, { color: sub }]}>진단비 {feeTotal.toLocaleString()}원</Text>
+              <Text style={[s.sectionTotalText, { color: sub }]}>진단비+관리수당 {feeTotal.toLocaleString()}원</Text>
               {claimTotal > 0 && (
                 <Text style={[s.sectionTotalText, { color: '#e53e3e' }]}>클레임 -{claimTotal.toLocaleString()}원</Text>
               )}
@@ -180,18 +195,27 @@ export default function SettlementHistoryScreen() {
           ) : (
             <FlatList
               data={data}
-              keyExtractor={item => item.id.toString()}
+              keyExtractor={item => `${item.kind}-${item.id}`}
               contentContainerStyle={{ paddingBottom: insets.bottom + 24, paddingTop: 8 }}
               renderItem={({ item }) => {
-                const directPaid = isDirectPaidBooking(item);
+                const isManagement = item.kind === 'management';
+                const directPaid = !isManagement && isDirectPaidBooking(item);
                 const itemFee = itemFeeOf(item);
-                const itemClaim = item.claimDeduction || 0;
+                const itemClaim = item.kind === 'diagnosis' ? (item.claimDeduction || 0) : 0;
                 return (
                   <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
                     <View style={{ flex: 1 }}>
-                      <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
+                        {isManagement && (
+                          <View style={s.tag}><Text style={s.tagText}>관리수당</Text></View>
+                        )}
+                      </View>
                       <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
-                      {!!item.extraFeeMemo && (
+                      {isManagement && !!item.agentBonusMemo && (
+                        <Text style={[s.memo, { color: sub }]}>{item.agentBonusMemo}</Text>
+                      )}
+                      {!isManagement && !!item.extraFeeMemo && (
                         <Text style={[s.memo, { color: sub }]}>{item.extraFeeMemo}</Text>
                       )}
                     </View>
@@ -200,7 +224,9 @@ export default function SettlementHistoryScreen() {
                       <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
                       {/* 오지/준오지·긴급 추가금과 기타비용은 0원이어도 항상 표시해서
                           "빠진 게 아니라 0원이 맞다"를 바로 확인할 수 있게 함 */}
-                      {directPaid ? (
+                      {isManagement ? (
+                        <Text style={[s.breakdown, { color: accent }]}>배정 관리수당(실제 진단자 별도)</Text>
+                      ) : directPaid ? (
                         <Text style={[s.breakdown, { color: '#b45309' }]}>{directPaidLabel(item)}</Text>
                       ) : (
                         <Text style={[s.breakdown, { color: sub }]}>
@@ -248,4 +274,6 @@ const s = StyleSheet.create({
   fee: { fontSize: 15, fontWeight: '800' },
   breakdown: { fontSize: 10, marginTop: 2 },
   claim: { fontSize: 11, fontWeight: '700', color: '#e53e3e', marginTop: 2 },
+  tag: { backgroundColor: '#63489a', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  tagText: { color: '#fff', fontSize: 10, fontWeight: '700' },
 });
