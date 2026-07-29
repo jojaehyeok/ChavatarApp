@@ -16,6 +16,9 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../constants/api';
 
+// 등급별 기본 진단비(원) — 대시보드 booking-list.tsx의 BASE_FEE_BY_TIER와 동일하게 유지
+const BASE_FEE_BY_TIER: Record<string, number> = { general: 50000, certified: 60000, agent: 65000 };
+
 interface CompletedItem {
   id: string | number;
   carNumber: string;
@@ -24,11 +27,18 @@ interface CompletedItem {
   updatedAt?: string;
   completedAt?: string;
   firstCompletedAt?: string;
+  remoteBonus?: number | null;
+  extraFee?: number | null;
+  extraFeeMemo?: string | null;
+  claimDeduction?: number | null;
 }
 
 interface Section {
   title: string;
   data: CompletedItem[];
+  feeTotal: number;
+  claimTotal: number;
+  netTotal: number;
 }
 
 export default function SettlementHistoryScreen() {
@@ -45,6 +55,7 @@ export default function SettlementHistoryScreen() {
 
   const [loading, setLoading] = useState(true);
   const [sections, setSections] = useState<Section[]>([]);
+  const [baseFee, setBaseFee] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,8 +66,14 @@ export default function SettlementHistoryScreen() {
       ]);
       if (!driverId) { setSections([]); return; }
 
-      const res = await axios.get(`${API_BASE_URL}/external/request/list`);
-      const all: any[] = Array.isArray(res.data) ? res.data : res.data.data;
+      const [listRes, driverRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/external/request/list`),
+        axios.get(`${API_BASE_URL}/drivers/${driverId}`).catch(() => null),
+      ]);
+      const all: any[] = Array.isArray(listRes.data) ? listRes.data : listRes.data.data;
+      const tier: string | undefined = driverRes?.data?.tier;
+      const fee = tier ? (BASE_FEE_BY_TIER[tier] ?? 0) : 0;
+      setBaseFee(fee);
 
       const completed = (all || []).filter(item => {
         const isMy = String(item.assignedDriverId) === String(driverId) || item.assignedDriverName === driverName;
@@ -78,10 +95,17 @@ export default function SettlementHistoryScreen() {
       });
 
       setSections(
-        Array.from(groups.entries()).map(([month, data]) => ({
-          title: month === '기타' ? '기타' : `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월 (${data.length}건)`,
-          data,
-        })),
+        Array.from(groups.entries()).map(([month, data]) => {
+          const feeTotal = data.reduce((sum, item) => sum + fee + (item.remoteBonus || 0) + (item.extraFee || 0), 0);
+          const claimTotal = data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0);
+          return {
+            title: month === '기타' ? '기타' : `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월 (${data.length}건)`,
+            data,
+            feeTotal,
+            claimTotal,
+            netTotal: feeTotal - claimTotal,
+          };
+        }),
       );
     } catch {
       setSections([]);
@@ -120,19 +144,39 @@ export default function SettlementHistoryScreen() {
           keyExtractor={item => item.id.toString()}
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           renderSectionHeader={({ section }) => (
-            <View style={[s.sectionHeader, { backgroundColor: bg }]}>
+            <View style={[s.sectionHeader, { backgroundColor: bg, borderBottomColor: border }]}>
               <Text style={[s.sectionHeaderText, { color: accent }]}>{section.title}</Text>
-            </View>
-          )}
-          renderItem={({ item }) => (
-            <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
-                <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
+              <View style={s.sectionTotals}>
+                <Text style={[s.sectionTotalText, { color: sub }]}>진단비 {section.feeTotal.toLocaleString()}원</Text>
+                {section.claimTotal > 0 && (
+                  <Text style={[s.sectionTotalText, { color: '#e53e3e' }]}>클레임 -{section.claimTotal.toLocaleString()}원</Text>
+                )}
+                <Text style={[s.sectionTotalTextBold, { color: text }]}>총 {section.netTotal.toLocaleString()}원</Text>
               </View>
-              <Text style={[s.date, { color: sub }]}>{item.preferredDateTime}</Text>
             </View>
           )}
+          renderItem={({ item }) => {
+            const itemFee = baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
+            const itemClaim = item.claimDeduction || 0;
+            return (
+              <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
+                  <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
+                  {!!item.extraFeeMemo && (
+                    <Text style={[s.memo, { color: sub }]}>{item.extraFeeMemo}</Text>
+                  )}
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={[s.date, { color: sub }]}>{item.preferredDateTime}</Text>
+                  <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
+                  {itemClaim > 0 && (
+                    <Text style={[s.claim]}>클레임 -{itemClaim.toLocaleString()}원</Text>
+                  )}
+                </View>
+              </View>
+            );
+          }}
         />
       )}
     </SafeAreaView>
@@ -144,14 +188,20 @@ const s = StyleSheet.create({
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: '700' },
 
-  sectionHeader: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 },
-  sectionHeaderText: { fontSize: 14, fontWeight: '700' },
+  sectionHeader: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  sectionHeaderText: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  sectionTotals: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
+  sectionTotalText: { fontSize: 12, fontWeight: '600' },
+  sectionTotalTextBold: { fontSize: 13, fontWeight: '800' },
 
   row: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginHorizontal: 16, marginBottom: 8, padding: 16, borderRadius: 12, borderWidth: 1,
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+    marginHorizontal: 16, marginTop: 8, padding: 16, borderRadius: 12, borderWidth: 1,
   },
   carModel: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
   carNumber: { fontSize: 13 },
-  date: { fontSize: 13 },
+  memo: { fontSize: 11, marginTop: 4 },
+  date: { fontSize: 12, marginBottom: 4 },
+  fee: { fontSize: 15, fontWeight: '800' },
+  claim: { fontSize: 11, fontWeight: '700', color: '#e53e3e', marginTop: 2 },
 });
