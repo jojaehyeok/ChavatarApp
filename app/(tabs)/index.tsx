@@ -325,6 +325,7 @@ export default function DiagnosisManagement() {
   const [togglingActive, setTogglingActive] = useState(false);
 
   const [filterDate, setFilterDate] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [timeChangeItem, setTimeChangeItem] = useState<DiagnosisItem | null>(null);
   const [selectedDate, setSelectedDate] = useState('');
@@ -468,9 +469,17 @@ export default function DiagnosisManagement() {
   }, [data, activeTab]);
 
   const filteredData = useMemo(() => {
-    if (activeTab !== 'upcoming' || filterDate === 'all') return data;
-    return data.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
-  }, [data, activeTab, filterDate]);
+    let result = data;
+    if (activeTab === 'upcoming' && filterDate !== 'all') {
+      result = result.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
+    }
+    // 차량번호로 검색 — "123두1588"처럼 앞부분을 몰라도 "1588"만 쳐도 찾을 수 있게 부분일치
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      result = result.filter(item => (item.carNumber || '').toLowerCase().includes(query));
+    }
+    return result;
+  }, [data, activeTab, filterDate, searchQuery]);
 
   const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy', target: 'dealer' | 'customer' = 'dealer') => {
     const rawContact = target === 'customer' ? selectedItem?.customerContact : selectedItem?.contact;
@@ -529,8 +538,12 @@ export default function DiagnosisManagement() {
       });
       // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
       // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
+      // 완료된 예약은 반대로 최근에 방문한 건이 위로 오도록 내림차순 정렬
       const normalizeDt = (dt: string) => (dt || '').replace('T', ' ');
-      filtered.sort((a, b) => normalizeDt(a.preferredDateTime).localeCompare(normalizeDt(b.preferredDateTime)));
+      filtered.sort((a, b) => {
+        const diff = normalizeDt(a.preferredDateTime).localeCompare(normalizeDt(b.preferredDateTime));
+        return activeTab === 'completed' ? -diff : diff;
+      });
       setData(filtered);
 
       // "예약 요청" 탭 뱃지용 카운트 — 지금 보고 있는 탭이 뭐든 상관없이 항상 최신으로 유지
@@ -860,6 +873,16 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.drawerItem, { borderBottomColor: theme.border }]}
+                  onPress={() => { closeDrawer(); setTimeout(() => router.push('/settlement-history' as any), 250); }}
+                >
+                  <View style={[styles.drawerItemIcon, { backgroundColor: isDark ? '#1e2e29' : '#f0fdf9' }]}>
+                    <Ionicons name="receipt-outline" size={20} color={theme.accent} />
+                  </View>
+                  <Text style={[styles.drawerItemText, { color: theme.textMain }]}>정산 내역</Text>
+                  <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.drawerItem, { borderBottomColor: theme.border }]}
                   onPress={() => { closeDrawer(); setTimeout(() => router.push('/PaintMeterScreen' as any), 250); }}
                 >
                   <View style={[styles.drawerItemIcon, { backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
@@ -902,7 +925,7 @@ export default function DiagnosisManagement() {
           {(['upcoming', 'request', 'completed'] as const).map((tab) => (
             <TouchableOpacity
               key={tab}
-              onPress={() => { setActiveTab(tab); setFilterDate('all'); }}
+              onPress={() => { setActiveTab(tab); setFilterDate('all'); setSearchQuery(''); }}
               style={[styles.tabItem, activeTab === tab && { borderBottomColor: isDark ? theme.accent : '#000', borderBottomWidth: 2 }]}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -918,6 +941,24 @@ export default function DiagnosisManagement() {
             </TouchableOpacity>
           ))}
         </View>
+
+        {activeTab === 'completed' && (
+          <View style={[styles.searchBar, { backgroundColor: theme.card, borderBottomColor: theme.border }]}>
+            <Ionicons name="search" size={18} color={theme.textSub} />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="차량번호로 검색 (예: 1588)"
+              placeholderTextColor={theme.textSub}
+              style={[styles.searchInput, { color: theme.textMain }]}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={18} color={theme.textSub} />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         {activeTab === 'upcoming' && upcomingDates.length > 0 && (
           <DateFilterStrip
@@ -965,22 +1006,24 @@ export default function DiagnosisManagement() {
                 <View style={styles.infoRow}><Text style={styles.label}>차량번호</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>위치</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.address}</Text></View>
                 <View style={styles.infoRow}><Text style={styles.label}>시간</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.preferredDateTime}</Text></View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.label}>고객번호</Text>
-                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                    <Text
-                      style={[styles.value, { color: theme.textMain }]}
-                      onPress={item.customerContact ? () => Clipboard.setStringAsync(item.customerContact!) : undefined}
-                    >
-                      {formatPhone(item.customerContact) || '없음'}
-                    </Text>
-                    {activeTab === 'upcoming' && (
-                      <TouchableOpacity onPress={() => openContactEdit(item)} style={{ marginLeft: 6, padding: 2 }}>
-                        <Ionicons name="pencil" size={14} color={theme.textSub} />
-                      </TouchableOpacity>
-                    )}
+                {activeTab !== 'request' && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.label}>고객번호</Text>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                      <Text
+                        style={[styles.value, { color: theme.textMain }]}
+                        onPress={item.customerContact ? () => Clipboard.setStringAsync(item.customerContact!) : undefined}
+                      >
+                        {formatPhone(item.customerContact) || '없음'}
+                      </Text>
+                      {activeTab === 'upcoming' && (
+                        <TouchableOpacity onPress={() => openContactEdit(item)} style={{ marginLeft: 6, padding: 2 }}>
+                          <Ionicons name="pencil" size={14} color={theme.textSub} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
-                </View>
+                )}
                 {activeTab === 'upcoming' && (
                   <View style={styles.infoRow}>
                     <Text style={styles.label}>진단사메모</Text>
@@ -1155,6 +1198,19 @@ export default function DiagnosisManagement() {
                 >
                   <Ionicons name="people-outline" size={22} color={theme.accent} />
                   <Text style={[styles.contactOptionText, { color: theme.textMain }]}>라운딩 요청</Text>
+                </TouchableOpacity>
+              )}
+              {isAgentTier && (
+                <TouchableOpacity
+                  style={styles.contactOption}
+                  onPress={() => {
+                    const item = moreOptionsItem!;
+                    setMoreOptionsItem(null);
+                    setTimeout(() => openAgentAssign(item), 300);
+                  }}
+                >
+                  <Ionicons name="person-circle-outline" size={22} color={theme.accent} />
+                  <Text style={[styles.contactOptionText, { color: theme.textMain }]}>담당자 변경</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -1431,6 +1487,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#e53e3e', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
   },
   tabBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1 },
+  searchInput: { flex: 1, fontSize: 15, padding: 0 },
   urgentBadge: {
     alignSelf: 'flex-start', backgroundColor: '#e53e3e', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
