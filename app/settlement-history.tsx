@@ -2,10 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  SectionList,
+  FlatList,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -33,8 +34,10 @@ interface CompletedItem {
   claimDeduction?: number | null;
 }
 
-interface Section {
-  title: string;
+interface MonthGroup {
+  key: string; // "2026-07" 또는 "기타"
+  label: string; // "7월" 칩에 쓰는 짧은 라벨
+  title: string; // "2026년 7월 (12건)" 목록 상단 제목
   data: CompletedItem[];
   feeTotal: number;
   claimTotal: number;
@@ -54,8 +57,9 @@ export default function SettlementHistoryScreen() {
   const accent = '#63489a';
 
   const [loading, setLoading] = useState(true);
-  const [sections, setSections] = useState<Section[]>([]);
+  const [groups, setGroups] = useState<MonthGroup[]>([]);
   const [baseFee, setBaseFee] = useState(0);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,7 +68,7 @@ export default function SettlementHistoryScreen() {
         AsyncStorage.getItem('driverId'),
         AsyncStorage.getItem('driverName'),
       ]);
-      if (!driverId) { setSections([]); return; }
+      if (!driverId) { setGroups([]); return; }
 
       const [listRes, driverRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/external/request/list`),
@@ -86,29 +90,32 @@ export default function SettlementHistoryScreen() {
       completed.sort((a, b) => (completedTime(b) || '').localeCompare(completedTime(a) || ''));
 
       // 완료 시점 기준 월별로 묶기
-      const groups = new Map<string, CompletedItem[]>();
+      const byMonth = new Map<string, CompletedItem[]>();
       completed.forEach(item => {
         const dt = completedTime(item) || '';
         const month = dt.length >= 7 ? dt.slice(0, 7) : '기타';
-        if (!groups.has(month)) groups.set(month, []);
-        groups.get(month)!.push(item);
+        if (!byMonth.has(month)) byMonth.set(month, []);
+        byMonth.get(month)!.push(item);
       });
 
-      setSections(
-        Array.from(groups.entries()).map(([month, data]) => {
-          const feeTotal = data.reduce((sum, item) => sum + fee + (item.remoteBonus || 0) + (item.extraFee || 0), 0);
-          const claimTotal = data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0);
-          return {
-            title: month === '기타' ? '기타' : `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월 (${data.length}건)`,
-            data,
-            feeTotal,
-            claimTotal,
-            netTotal: feeTotal - claimTotal,
-          };
-        }),
-      );
+      const nextGroups = Array.from(byMonth.entries()).map(([month, data]) => {
+        const feeTotal = data.reduce((sum, item) => sum + fee + (item.remoteBonus || 0) + (item.extraFee || 0), 0);
+        const claimTotal = data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0);
+        return {
+          key: month,
+          label: month === '기타' ? '기타' : `${Number(month.slice(5, 7))}월`,
+          title: month === '기타' ? '기타' : `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월 (${data.length}건)`,
+          data,
+          feeTotal,
+          claimTotal,
+          netTotal: feeTotal - claimTotal,
+        };
+      });
+
+      setGroups(nextGroups);
+      setSelectedMonth(prev => (prev && nextGroups.some(g => g.key === prev)) ? prev : (nextGroups[0]?.key ?? null));
     } catch {
-      setSections([]);
+      setGroups([]);
     } finally {
       setLoading(false);
     }
@@ -116,7 +123,8 @@ export default function SettlementHistoryScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const totalCount = sections.reduce((sum, s) => sum + s.data.length, 0);
+  const totalCount = groups.reduce((sum, g) => sum + g.data.length, 0);
+  const activeGroup = useMemo(() => groups.find(g => g.key === selectedMonth) ?? null, [groups, selectedMonth]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bg }}>
@@ -139,45 +147,74 @@ export default function SettlementHistoryScreen() {
           <Text style={{ color: sub, fontSize: 15 }}>완료된 진단 내역이 없습니다.</Text>
         </View>
       ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={item => item.id.toString()}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
-          renderSectionHeader={({ section }) => (
-            <View style={[s.sectionHeader, { backgroundColor: bg, borderBottomColor: border }]}>
-              <Text style={[s.sectionHeaderText, { color: accent }]}>{section.title}</Text>
-              <View style={s.sectionTotals}>
-                <Text style={[s.sectionTotalText, { color: sub }]}>진단비 {section.feeTotal.toLocaleString()}원</Text>
-                {section.claimTotal > 0 && (
-                  <Text style={[s.sectionTotalText, { color: '#e53e3e' }]}>클레임 -{section.claimTotal.toLocaleString()}원</Text>
-                )}
-                <Text style={[s.sectionTotalTextBold, { color: text }]}>총 {section.netTotal.toLocaleString()}원</Text>
+        <>
+          {/* 월 슬라이드 — 좌우로 넘기며 월을 선택 */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={[s.monthStrip, { borderBottomColor: border }]}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
+          >
+            {groups.map(g => {
+              const active = g.key === selectedMonth;
+              return (
+                <TouchableOpacity
+                  key={g.key}
+                  onPress={() => setSelectedMonth(g.key)}
+                  style={[
+                    s.monthChip,
+                    { backgroundColor: active ? accent : (isDark ? '#2a2a2a' : '#f0f0f0') },
+                  ]}
+                >
+                  <Text style={[s.monthChipText, { color: active ? '#fff' : text }]}>{g.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {activeGroup && (
+            <>
+              <View style={[s.sectionHeader, { backgroundColor: bg, borderBottomColor: border }]}>
+                <Text style={[s.sectionHeaderText, { color: accent }]}>{activeGroup.title}</Text>
+                <View style={s.sectionTotals}>
+                  <Text style={[s.sectionTotalText, { color: sub }]}>진단비 {activeGroup.feeTotal.toLocaleString()}원</Text>
+                  {activeGroup.claimTotal > 0 && (
+                    <Text style={[s.sectionTotalText, { color: '#e53e3e' }]}>클레임 -{activeGroup.claimTotal.toLocaleString()}원</Text>
+                  )}
+                  <Text style={[s.sectionTotalTextBold, { color: text }]}>총 {activeGroup.netTotal.toLocaleString()}원</Text>
+                </View>
               </View>
-            </View>
+
+              <FlatList
+                data={activeGroup.data}
+                keyExtractor={item => item.id.toString()}
+                contentContainerStyle={{ paddingBottom: insets.bottom + 24, paddingTop: 8 }}
+                renderItem={({ item }) => {
+                  const itemFee = baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
+                  const itemClaim = item.claimDeduction || 0;
+                  return (
+                    <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
+                        <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
+                        {!!item.extraFeeMemo && (
+                          <Text style={[s.memo, { color: sub }]}>{item.extraFeeMemo}</Text>
+                        )}
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={[s.date, { color: sub }]}>{item.preferredDateTime}</Text>
+                        <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
+                        {itemClaim > 0 && (
+                          <Text style={s.claim}>클레임 -{itemClaim.toLocaleString()}원</Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                }}
+              />
+            </>
           )}
-          renderItem={({ item }) => {
-            const itemFee = baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
-            const itemClaim = item.claimDeduction || 0;
-            return (
-              <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
-                  <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
-                  {!!item.extraFeeMemo && (
-                    <Text style={[s.memo, { color: sub }]}>{item.extraFeeMemo}</Text>
-                  )}
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[s.date, { color: sub }]}>{item.preferredDateTime}</Text>
-                  <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
-                  {itemClaim > 0 && (
-                    <Text style={[s.claim]}>클레임 -{itemClaim.toLocaleString()}원</Text>
-                  )}
-                </View>
-              </View>
-            );
-          }}
-        />
+        </>
       )}
     </SafeAreaView>
   );
@@ -188,7 +225,11 @@ const s = StyleSheet.create({
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: '700' },
 
-  sectionHeader: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  monthStrip: { flexGrow: 0, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  monthChip: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 20 },
+  monthChipText: { fontSize: 14, fontWeight: '700' },
+
+  sectionHeader: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   sectionHeaderText: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
   sectionTotals: { flexDirection: 'row', gap: 10, flexWrap: 'wrap' },
   sectionTotalText: { fontSize: 12, fontWeight: '600' },
@@ -196,7 +237,7 @@ const s = StyleSheet.create({
 
   row: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
-    marginHorizontal: 16, marginTop: 8, padding: 16, borderRadius: 12, borderWidth: 1,
+    marginHorizontal: 16, marginBottom: 8, padding: 16, borderRadius: 12, borderWidth: 1,
   },
   carModel: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
   carNumber: { fontSize: 13 },
