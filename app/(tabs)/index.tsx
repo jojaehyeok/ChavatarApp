@@ -481,6 +481,15 @@ export default function DiagnosisManagement() {
     return result;
   }, [data, activeTab, filterDate, searchQuery]);
 
+  // 자동배정 알림톡을 놓칠 수 있어서 추가한 "확인 여부" 표시(대시보드 "배정 진단사" 컬럼) —
+  // 진단사가 실제로 이 건에 반응했다고 볼 수 있는 행동(연락하기/시간 변경) 시점에 기록한다.
+  const markDriverSeen = useCallback((item: DiagnosisItem | null) => {
+    if (!item) return;
+    axios.patch(`${API_BASE_URL}/external/request/${item.id}/mark-seen`, {
+      driverId: currentDriverId || undefined,
+    }).catch(() => {});
+  }, [currentDriverId]);
+
   const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy', target: 'dealer' | 'customer' = 'dealer') => {
     const rawContact = target === 'customer' ? selectedItem?.customerContact : selectedItem?.contact;
     if (!rawContact) {
@@ -499,6 +508,7 @@ export default function DiagnosisManagement() {
       url += `${Platform.OS === 'ios' ? '&' : '?'}body=${encodeURIComponent(message)}`;
     }
     setContactModalVisible(false);
+    if (type === 'tel') markDriverSeen(selectedItem);
     try { await Linking.openURL(url); } catch { Alert.alert('오류', '연결할 수 없습니다.'); }
   };
 
@@ -576,6 +586,7 @@ export default function DiagnosisManagement() {
       await axios.patch(`${API_BASE_URL}/external/request/${timeChangeItem.id}/status`, {
         preferredDateTime: newDateTime,
       });
+      markDriverSeen(timeChangeItem);
       Alert.alert('변경 완료', '예약 시간이 변경되었습니다.');
       setTimeChangeItem(null);
       fetchData();

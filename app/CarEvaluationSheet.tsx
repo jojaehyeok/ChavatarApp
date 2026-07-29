@@ -758,17 +758,8 @@ export default function CarEvaluationSheet() {
       loadEditData(isAdminRequest);
     } else {
       loadSavedData();
-      // 배정된 건을 진단사가 실제로 열어봤다는 표시(대시보드 "확인함/미확인" 용) —
-      // 연습 모드는 서버에 아무것도 남기지 않는 게 원칙이라 대상에서 제외.
-      if (requestId && !isPractice) {
-        AsyncStorage.getItem("driverId").then((driverId) => {
-          fetch(`${API_BASE_URL}/external/request/${requestId}/mark-seen`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ driverId: driverId || undefined }),
-          }).catch(() => {});
-        });
-      }
+      // "확인 여부"(대시보드 "배정 진단사" 컬럼)는 이제 여기(진단 시작 화면 진입)가 아니라
+      // 목록 화면에서 연락하기/시간 변경을 했을 때 기록한다(app/(tabs)/index.tsx의 markDriverSeen).
     }
   }, []);
 
