@@ -78,10 +78,12 @@ export default function SettlementHistoryScreen() {
       const tier: string | undefined = driverRes?.data?.tier;
       setBaseFee(tier ? (BASE_FEE_BY_TIER[tier] ?? 0) : 0);
 
+      // "완료된 예약" 탭과 달리 정산은 실제로 진단을 수행한 사람 기준이어야 함 —
+      // 에이전트가 다른 평가사에게 지정 배정만 한 건(assignedByAgentId)은 리포트는
+      // 에이전트도 수정할 수 있지만, 정산/지급은 실제 배정된 평가사 몫이라 제외한다.
       const completed = (all || []).filter(item => {
         const isMy = String(item.assignedDriverId) === String(driverId) || item.assignedDriverName === driverName;
-        const isAgentAssignedByMe = String(item.assignedByAgentId) === String(driverId);
-        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
+        return item.status === 'COMPLETED' && isMy;
       });
 
       // 완료된 예약 탭과 동일하게 최근에 완료한 건이 위로 오도록 정렬
