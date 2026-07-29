@@ -758,6 +758,17 @@ export default function CarEvaluationSheet() {
       loadEditData(isAdminRequest);
     } else {
       loadSavedData();
+      // 배정된 건을 진단사가 실제로 열어봤다는 표시(대시보드 "확인함/미확인" 용) —
+      // 연습 모드는 서버에 아무것도 남기지 않는 게 원칙이라 대상에서 제외.
+      if (requestId && !isPractice) {
+        AsyncStorage.getItem("driverId").then((driverId) => {
+          fetch(`${API_BASE_URL}/external/request/${requestId}/mark-seen`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ driverId: driverId || undefined }),
+          }).catch(() => {});
+        });
+      }
     }
   }, []);
 
