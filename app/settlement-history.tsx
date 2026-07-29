@@ -6,7 +6,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -34,15 +33,7 @@ interface CompletedItem {
   claimDeduction?: number | null;
 }
 
-interface MonthGroup {
-  key: string; // "2026-07" 또는 "기타"
-  label: string; // "7월" 칩에 쓰는 짧은 라벨
-  title: string; // "2026년 7월 (12건)" 목록 상단 제목
-  data: CompletedItem[];
-  feeTotal: number;
-  claimTotal: number;
-  netTotal: number;
-}
+const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, '0')}`;
 
 export default function SettlementHistoryScreen() {
   const router = useRouter();
@@ -56,10 +47,12 @@ export default function SettlementHistoryScreen() {
   const border = isDark ? '#2a2a2a' : '#eee';
   const accent = '#63489a';
 
+  const now = new Date();
   const [loading, setLoading] = useState(true);
-  const [groups, setGroups] = useState<MonthGroup[]>([]);
   const [baseFee, setBaseFee] = useState(0);
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [byMonth, setByMonth] = useState<Map<string, CompletedItem[]>>(new Map());
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState(now.getMonth() + 1); // 1~12
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,7 +61,7 @@ export default function SettlementHistoryScreen() {
         AsyncStorage.getItem('driverId'),
         AsyncStorage.getItem('driverName'),
       ]);
-      if (!driverId) { setGroups([]); return; }
+      if (!driverId) { setByMonth(new Map()); return; }
 
       const [listRes, driverRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/external/request/list`),
@@ -76,8 +69,7 @@ export default function SettlementHistoryScreen() {
       ]);
       const all: any[] = Array.isArray(listRes.data) ? listRes.data : listRes.data.data;
       const tier: string | undefined = driverRes?.data?.tier;
-      const fee = tier ? (BASE_FEE_BY_TIER[tier] ?? 0) : 0;
-      setBaseFee(fee);
+      setBaseFee(tier ? (BASE_FEE_BY_TIER[tier] ?? 0) : 0);
 
       const completed = (all || []).filter(item => {
         const isMy = String(item.assignedDriverId) === String(driverId) || item.assignedDriverName === driverName;
@@ -89,33 +81,17 @@ export default function SettlementHistoryScreen() {
       const completedTime = (item: CompletedItem) => item.firstCompletedAt || item.completedAt || item.updatedAt || item.preferredDateTime;
       completed.sort((a, b) => (completedTime(b) || '').localeCompare(completedTime(a) || ''));
 
-      // 완료 시점 기준 월별로 묶기
-      const byMonth = new Map<string, CompletedItem[]>();
+      const grouped = new Map<string, CompletedItem[]>();
       completed.forEach(item => {
         const dt = completedTime(item) || '';
-        const month = dt.length >= 7 ? dt.slice(0, 7) : '기타';
-        if (!byMonth.has(month)) byMonth.set(month, []);
-        byMonth.get(month)!.push(item);
+        if (dt.length < 7) return;
+        const month = dt.slice(0, 7);
+        if (!grouped.has(month)) grouped.set(month, []);
+        grouped.get(month)!.push(item);
       });
-
-      const nextGroups = Array.from(byMonth.entries()).map(([month, data]) => {
-        const feeTotal = data.reduce((sum, item) => sum + fee + (item.remoteBonus || 0) + (item.extraFee || 0), 0);
-        const claimTotal = data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0);
-        return {
-          key: month,
-          label: month === '기타' ? '기타' : `${Number(month.slice(5, 7))}월`,
-          title: month === '기타' ? '기타' : `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월 (${data.length}건)`,
-          data,
-          feeTotal,
-          claimTotal,
-          netTotal: feeTotal - claimTotal,
-        };
-      });
-
-      setGroups(nextGroups);
-      setSelectedMonth(prev => (prev && nextGroups.some(g => g.key === prev)) ? prev : (nextGroups[0]?.key ?? null));
+      setByMonth(grouped);
     } catch {
-      setGroups([]);
+      setByMonth(new Map());
     } finally {
       setLoading(false);
     }
@@ -123,8 +99,26 @@ export default function SettlementHistoryScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const totalCount = groups.reduce((sum, g) => sum + g.data.length, 0);
-  const activeGroup = useMemo(() => groups.find(g => g.key === selectedMonth) ?? null, [groups, selectedMonth]);
+  const isCurrentMonth = viewYear === now.getFullYear() && viewMonth === now.getMonth() + 1;
+
+  const goPrevMonth = () => {
+    setViewMonth(m => {
+      if (m === 1) { setViewYear(y => y - 1); return 12; }
+      return m - 1;
+    });
+  };
+  const goNextMonth = () => {
+    if (isCurrentMonth) return; // 미래 달은 데이터가 있을 수 없으니 이동 막음
+    setViewMonth(m => {
+      if (m === 12) { setViewYear(y => y + 1); return 1; }
+      return m + 1;
+    });
+  };
+
+  const data = useMemo(() => byMonth.get(monthKey(viewYear, viewMonth)) ?? [], [byMonth, viewYear, viewMonth]);
+  const feeTotal = useMemo(() => data.reduce((sum, item) => sum + baseFee + (item.remoteBonus || 0) + (item.extraFee || 0), 0), [data, baseFee]);
+  const claimTotal = useMemo(() => data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0), [data]);
+  const netTotal = feeTotal - claimTotal;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: bg }}>
@@ -138,81 +132,71 @@ export default function SettlementHistoryScreen() {
         <View style={{ width: 40 }} />
       </View>
 
+      {/* 월 이동 — < 2026년 7월 > */}
+      <View style={[s.monthNav, { borderBottomColor: border }]}>
+        <TouchableOpacity onPress={goPrevMonth} style={s.monthNavBtn}>
+          <Ionicons name="chevron-back" size={22} color={text} />
+        </TouchableOpacity>
+        <Text style={[s.monthNavText, { color: text }]}>{viewYear}년 {viewMonth}월</Text>
+        <TouchableOpacity onPress={goNextMonth} disabled={isCurrentMonth} style={s.monthNavBtn}>
+          <Ionicons name="chevron-forward" size={22} color={isCurrentMonth ? border : text} />
+        </TouchableOpacity>
+      </View>
+
       {loading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={accent} size="large" />
         </View>
-      ) : totalCount === 0 ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: sub, fontSize: 15 }}>완료된 진단 내역이 없습니다.</Text>
-        </View>
       ) : (
         <>
-          {/* 월 슬라이드 — 좌우로 넘기며 월을 선택 */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={[s.monthStrip, { borderBottomColor: border }]}
-            contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
-          >
-            {groups.map(g => {
-              const active = g.key === selectedMonth;
-              return (
-                <TouchableOpacity
-                  key={g.key}
-                  onPress={() => setSelectedMonth(g.key)}
-                  style={[
-                    s.monthChip,
-                    { backgroundColor: active ? accent : (isDark ? '#2a2a2a' : '#f0f0f0') },
-                  ]}
-                >
-                  <Text style={[s.monthChipText, { color: active ? '#fff' : text }]}>{g.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+          <View style={[s.sectionHeader, { backgroundColor: bg, borderBottomColor: border }]}>
+            <Text style={[s.sectionHeaderText, { color: accent }]}>{data.length}건</Text>
+            <View style={s.sectionTotals}>
+              <Text style={[s.sectionTotalText, { color: sub }]}>진단비 {feeTotal.toLocaleString()}원</Text>
+              {claimTotal > 0 && (
+                <Text style={[s.sectionTotalText, { color: '#e53e3e' }]}>클레임 -{claimTotal.toLocaleString()}원</Text>
+              )}
+              <Text style={[s.sectionTotalTextBold, { color: text }]}>총 {netTotal.toLocaleString()}원</Text>
+            </View>
+          </View>
 
-          {activeGroup && (
-            <>
-              <View style={[s.sectionHeader, { backgroundColor: bg, borderBottomColor: border }]}>
-                <Text style={[s.sectionHeaderText, { color: accent }]}>{activeGroup.title}</Text>
-                <View style={s.sectionTotals}>
-                  <Text style={[s.sectionTotalText, { color: sub }]}>진단비 {activeGroup.feeTotal.toLocaleString()}원</Text>
-                  {activeGroup.claimTotal > 0 && (
-                    <Text style={[s.sectionTotalText, { color: '#e53e3e' }]}>클레임 -{activeGroup.claimTotal.toLocaleString()}원</Text>
-                  )}
-                  <Text style={[s.sectionTotalTextBold, { color: text }]}>총 {activeGroup.netTotal.toLocaleString()}원</Text>
-                </View>
-              </View>
-
-              <FlatList
-                data={activeGroup.data}
-                keyExtractor={item => item.id.toString()}
-                contentContainerStyle={{ paddingBottom: insets.bottom + 24, paddingTop: 8 }}
-                renderItem={({ item }) => {
-                  const itemFee = baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
-                  const itemClaim = item.claimDeduction || 0;
-                  return (
-                    <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
-                        <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
-                        {!!item.extraFeeMemo && (
-                          <Text style={[s.memo, { color: sub }]}>{item.extraFeeMemo}</Text>
-                        )}
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={[s.date, { color: sub }]}>{item.preferredDateTime}</Text>
-                        <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
-                        {itemClaim > 0 && (
-                          <Text style={s.claim}>클레임 -{itemClaim.toLocaleString()}원</Text>
-                        )}
-                      </View>
+          {data.length === 0 ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: sub, fontSize: 15 }}>완료된 진단 내역이 없습니다.</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={data}
+              keyExtractor={item => item.id.toString()}
+              contentContainerStyle={{ paddingBottom: insets.bottom + 24, paddingTop: 8 }}
+              renderItem={({ item }) => {
+                const itemFee = baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
+                const itemClaim = item.claimDeduction || 0;
+                return (
+                  <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
+                      <Text style={[s.carNumber, { color: sub }]}>{item.carNumber}</Text>
+                      {!!item.extraFeeMemo && (
+                        <Text style={[s.memo, { color: sub }]}>{item.extraFeeMemo}</Text>
+                      )}
                     </View>
-                  );
-                }}
-              />
-            </>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={[s.date, { color: sub }]}>{item.preferredDateTime}</Text>
+                      <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
+                      {/* 오지/준오지·긴급 추가금과 기타비용은 0원이어도 항상 표시해서
+                          "빠진 게 아니라 0원이 맞다"를 바로 확인할 수 있게 함 */}
+                      <Text style={[s.breakdown, { color: sub }]}>
+                        기본 {baseFee.toLocaleString()} · 추가 {(item.remoteBonus || 0).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
+                      </Text>
+                      {itemClaim > 0 && (
+                        <Text style={s.claim}>클레임 -{itemClaim.toLocaleString()}원</Text>
+                      )}
+                    </View>
+                  </View>
+                );
+              }}
+            />
           )}
         </>
       )}
@@ -225,9 +209,9 @@ const s = StyleSheet.create({
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: '700' },
 
-  monthStrip: { flexGrow: 0, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  monthChip: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 20 },
-  monthChipText: { fontSize: 14, fontWeight: '700' },
+  monthNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  monthNavBtn: { padding: 6 },
+  monthNavText: { fontSize: 17, fontWeight: '800', minWidth: 110, textAlign: 'center' },
 
   sectionHeader: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   sectionHeaderText: { fontSize: 14, fontWeight: '700', marginBottom: 4 },
@@ -244,5 +228,6 @@ const s = StyleSheet.create({
   memo: { fontSize: 11, marginTop: 4 },
   date: { fontSize: 12, marginBottom: 4 },
   fee: { fontSize: 15, fontWeight: '800' },
+  breakdown: { fontSize: 10, marginTop: 2 },
   claim: { fontSize: 11, fontWeight: '700', color: '#e53e3e', marginTop: 2 },
 });
