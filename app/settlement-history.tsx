@@ -126,7 +126,7 @@ export default function SettlementHistoryScreen() {
 
       <View style={[s.header, { borderBottomColor: border }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Ionicons name="chevron-back" size={26} color={text} />
+          <Ionicons name="close" size={26} color={text} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: text }]}>정산 내역</Text>
         <View style={{ width: 40 }} />
