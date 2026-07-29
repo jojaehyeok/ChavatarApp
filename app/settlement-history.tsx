@@ -31,9 +31,16 @@ interface CompletedItem {
   extraFee?: number | null;
   extraFeeMemo?: string | null;
   claimDeduction?: number | null;
+  source?: string;
+  isExportBooking?: boolean;
 }
 
 const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, '0')}`;
+
+// 수출건/구매동행(개인거래)은 현장에서 바로 입금해드려서 이 정산에 다시 잡으면 중복이라 0원 처리 —
+// 대신 왜 0원인지 알 수 있게 라벨을 보여준다.
+const isDirectPaidBooking = (item: CompletedItem) => !!item.isExportBooking || item.source === 'CARVIOR_INSPECTION';
+const directPaidLabel = (item: CompletedItem) => item.isExportBooking ? '🚢 수출건 · 직접지급 완료' : '🧑 구매동행(개인거래) · 직접지급 완료';
 
 export default function SettlementHistoryScreen() {
   const router = useRouter();
@@ -116,7 +123,11 @@ export default function SettlementHistoryScreen() {
   };
 
   const data = useMemo(() => byMonth.get(monthKey(viewYear, viewMonth)) ?? [], [byMonth, viewYear, viewMonth]);
-  const feeTotal = useMemo(() => data.reduce((sum, item) => sum + baseFee + (item.remoteBonus || 0) + (item.extraFee || 0), 0), [data, baseFee]);
+  const itemFeeOf = useCallback(
+    (item: CompletedItem) => isDirectPaidBooking(item) ? 0 : baseFee + (item.remoteBonus || 0) + (item.extraFee || 0),
+    [baseFee],
+  );
+  const feeTotal = useMemo(() => data.reduce((sum, item) => sum + itemFeeOf(item), 0), [data, itemFeeOf]);
   const claimTotal = useMemo(() => data.reduce((sum, item) => sum + (item.claimDeduction || 0), 0), [data]);
   const netTotal = feeTotal - claimTotal;
 
@@ -170,7 +181,8 @@ export default function SettlementHistoryScreen() {
               keyExtractor={item => item.id.toString()}
               contentContainerStyle={{ paddingBottom: insets.bottom + 24, paddingTop: 8 }}
               renderItem={({ item }) => {
-                const itemFee = baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
+                const directPaid = isDirectPaidBooking(item);
+                const itemFee = itemFeeOf(item);
                 const itemClaim = item.claimDeduction || 0;
                 return (
                   <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
@@ -186,9 +198,13 @@ export default function SettlementHistoryScreen() {
                       <Text style={[s.fee, { color: text }]}>{itemFee.toLocaleString()}원</Text>
                       {/* 오지/준오지·긴급 추가금과 기타비용은 0원이어도 항상 표시해서
                           "빠진 게 아니라 0원이 맞다"를 바로 확인할 수 있게 함 */}
-                      <Text style={[s.breakdown, { color: sub }]}>
-                        기본 {baseFee.toLocaleString()} · 추가 {(item.remoteBonus || 0).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
-                      </Text>
+                      {directPaid ? (
+                        <Text style={[s.breakdown, { color: '#b45309' }]}>{directPaidLabel(item)}</Text>
+                      ) : (
+                        <Text style={[s.breakdown, { color: sub }]}>
+                          기본 {baseFee.toLocaleString()} · 추가 {(item.remoteBonus || 0).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
+                        </Text>
+                      )}
                       {itemClaim > 0 && (
                         <Text style={s.claim}>클레임 -{itemClaim.toLocaleString()}원</Text>
                       )}
