@@ -133,6 +133,8 @@ interface DiagnosisItem {
   adminMemo?: string | null;
   isUrgent?: boolean;
   isExportBooking?: boolean;
+  remoteTier?: 'semi_remote' | 'remote' | null;
+  nearestDriverKm?: number | null;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -997,6 +999,14 @@ export default function DiagnosisManagement() {
                   <Text style={styles.exportBadgeText}>🚢 수출건</Text>
                 </View>
               )}
+              {activeTab === 'request' && item.remoteTier && (
+                <View style={item.remoteTier === 'remote' ? styles.remoteBadge : styles.semiRemoteBadge}>
+                  <Text style={styles.remoteBadgeText}>
+                    {item.remoteTier === 'remote' ? '🏔 오지' : '🗺 준오지'}
+                    {item.nearestDriverKm != null ? ` (편도 약 ${item.nearestDriverKm}km)` : ''}
+                  </Text>
+                </View>
+              )}
               <View style={styles.cardHeader}>
                 <Text style={[styles.cardTitle, { color: theme.textMain }]}>{item.carModel || '차량 정보 없음'}</Text>
                 {activeTab === 'upcoming'
@@ -1510,6 +1520,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
   },
   exportBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  remoteBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#dc2626', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  semiRemoteBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#ea580c', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  remoteBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 
   dateStripScroll: { height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
