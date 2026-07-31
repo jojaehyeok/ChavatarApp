@@ -12,9 +12,11 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -220,6 +222,157 @@ const formatNumber = (val: string) =>
 const onlyS3 = (urls: string[]) =>
   (urls || []).filter((url) => url.startsWith("http"));
 
+// 그리드 썸네일 하나당 useVideoPlayer 훅이 필요해서(.map 콜백 안에서는 훅 호출 불가)
+// 별도 컴포넌트로 분리 — 음소거 미리보기, 탭하면 부모가 전체화면 모달을 띄움
+function VideoGridThumb({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.muted = true;
+  });
+  return (
+    <VideoView
+      player={player}
+      style={StyleSheet.absoluteFill}
+      contentFit="cover"
+      nativeControls={false}
+    />
+  );
+}
+
+// 전체화면 재생 모달 전용 — 열릴 때만 마운트되고 자동재생
+function VideoFullscreenPlayer({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.play();
+  });
+  return (
+    <VideoView
+      player={player}
+      style={{ flex: 1 }}
+      contentFit="contain"
+      nativeControls
+    />
+  );
+}
+
+// 이상확인 영상 자체 촬영 — 시스템 카메라 앱(ImagePicker)에 위임하면 videoMaxDuration을
+// 기종/제조사 카메라 앱이 무시하는 경우가 있어(특히 삼성), 우리 앱 안에서 직접 CameraView로
+// 찍고 recordAsync의 maxDuration으로 확실하게 15초에서 끊는다.
+const ISSUE_VIDEO_MAX_SEC = 15;
+
+function IssueVideoRecorderModal({
+  visible,
+  onClose,
+  onRecorded,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onRecorded: (uri: string) => void;
+}) {
+  const cameraRef = useRef<CameraView>(null);
+  const [camPerm, requestCamPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+  const [recording, setRecording] = useState(false);
+  const [countdown, setCountdown] = useState(ISSUE_VIDEO_MAX_SEC);
+  const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!camPerm?.granted) requestCamPerm();
+    if (!micPerm?.granted) requestMicPerm();
+  }, [visible]);
+
+  const clearCountdown = () => {
+    if (countdownTimer.current) clearInterval(countdownTimer.current);
+    countdownTimer.current = null;
+  };
+
+  const startRecording = async () => {
+    if (!cameraRef.current || recording) return;
+    setRecording(true);
+    setCountdown(ISSUE_VIDEO_MAX_SEC);
+    countdownTimer.current = setInterval(() => {
+      setCountdown((c) => (c > 0 ? c - 1 : 0));
+    }, 1000);
+    try {
+      const video = await cameraRef.current.recordAsync({ maxDuration: ISSUE_VIDEO_MAX_SEC });
+      clearCountdown();
+      setRecording(false);
+      if (video?.uri) onRecorded(video.uri);
+      onClose();
+    } catch (e) {
+      console.error("🔥 영상 촬영 실패:", e);
+      clearCountdown();
+      setRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    cameraRef.current?.stopRecording();
+  };
+
+  if (!visible) return null;
+
+  const permsGranted = camPerm?.granted && micPerm?.granted;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={recording ? undefined : onClose}>
+      <View style={{ flex: 1, backgroundColor: "#000" }}>
+        {permsGranted ? (
+          // 진단용 영상은 화질보다 발열/버벅임 방지가 우선이라 720p로 낮춰서 인코딩 부하를 줄임
+          <CameraView
+            ref={cameraRef}
+            style={{ flex: 1 }}
+            mode="video"
+            facing="back"
+            mute={false}
+            videoQuality="720p"
+          />
+        ) : (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+            <Text style={{ color: "#fff", textAlign: "center" }}>
+              영상 촬영을 위해 카메라/마이크 접근 권한이 필요합니다.
+            </Text>
+          </View>
+        )}
+
+        {!recording && (
+          <TouchableOpacity
+            style={{ position: "absolute", top: 50, left: 20 }}
+            onPress={onClose}
+          >
+            <Ionicons name="close-circle" size={36} color="#fff" />
+          </TouchableOpacity>
+        )}
+
+        {recording && (
+          <View
+            style={{
+              position: "absolute", top: 50, alignSelf: "center",
+              backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 16 }}>{countdown}초 남음</Text>
+          </View>
+        )}
+
+        <View style={{ position: "absolute", bottom: 60, alignSelf: "center", alignItems: "center" }}>
+          {permsGranted && (
+            <TouchableOpacity
+              onPress={recording ? stopRecording : startRecording}
+              style={{
+                width: 76, height: 76, borderRadius: recording ? 14 : 38,
+                backgroundColor: "#e53e3e", borderWidth: 5, borderColor: "#fff",
+              }}
+            />
+          )}
+          <Text style={{ color: "#fff", marginTop: 12, fontSize: 13 }}>
+            {recording ? "탭하면 바로 정지" : `탭해서 촬영 시작 (최대 ${ISSUE_VIDEO_MAX_SEC}초)`}
+          </Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function CarEvaluationSheet() {
   const { requestId, carNumber: carNumberParam, carModel: carModelParam, serviceType, mode, adminRequest } =
@@ -257,16 +410,21 @@ export default function CarEvaluationSheet() {
   const [regImage, setRegImage] = useState<string | null>(null); // 자동차등록증
   const [vinImage, setVinImage] = useState<string | null>(null); // 차대번호(라벨)
 
-  // 확인사항(경고등/옵션/누유/주행중 이상/엔진룸 이상) 항목별 첨부사진 — "기타의견" 사진첩과 안 섞이게
-  // 항목별로 따로 관리, 각 항목당 최대 3장
+  // 확인사항(경고등/옵션/누유) 항목별 첨부사진 — "기타의견" 사진첩과 안 섞이게
+  // 항목별로 따로 관리, 각 항목당 최대 3장. 주행중 이상/엔진룸 이상은 텍스트+사진 대신
+  // 아래 "영상 추가"(엔진 이음/조향 이음/옵션작동 이상 등) 하나로 통합됨.
   const MAX_CHECKLIST_PHOTOS = 3;
   const [checklistPhotos, setChecklistPhotos] = useState<Record<string, string[]>>({
     warning: [],
     options: [],
     leak: [],
-    drive: [],
-    engine: [],
   });
+
+  // 영상 추가 (엔진 이음/조향 이음/옵션작동 이상 등, 한 건만 등록 — 재촬영 시 교체)
+  const [issueVideo, setIssueVideo] = useState<string | null>(null); // 업로드 중엔 로컬 URI, 완료되면 S3 URL
+  const [issueVideoUploading, setIssueVideoUploading] = useState(false);
+  const [issueVideoModalVisible, setIssueVideoModalVisible] = useState(false);
+  const [issueVideoRecorderVisible, setIssueVideoRecorderVisible] = useState(false);
 
   // 1. 상단에 추가할 상태값 (컴포넌트 내부)
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
@@ -306,13 +464,9 @@ export default function CarEvaluationSheet() {
   const [showWarning, setShowWarning] = useState(false);
   const [showLeak, setShowLeak] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
-  const [showDrive, setShowDrive] = useState(false);
-  const [showEngine, setShowEngine] = useState(false);
   const [warningDesc, setWarningDesc] = useState("");
   const [leakDesc, setLeakDesc] = useState("");
   const [optionsDesc, setOptionsDesc] = useState("");
-  const [driveDesc, setDriveDesc] = useState("");
-  const [engineDesc, setEngineDesc] = useState("");
 
   // ── 기타 메모 ────────────────────────────────────────────────────────────
   const [memo, setMemo] = useState("");
@@ -327,7 +481,7 @@ export default function CarEvaluationSheet() {
   // 안전하도록 타이핑 멈추면 알아서 백그라운드 저장되게 별도 디바운스 타이머를 둔다
   const memoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [memoHeight, setMemoHeight] = useState(100); // 줄바꿈 많은 입력도 잘리지 않게 내용에 맞춰 자동으로 늘어남
-  // 확인사항(경고등/옵션/누유/주행중 이상)의 상세 입력창도 동일하게 내용에 맞춰 늘어나도록 —
+  // 확인사항(경고등/옵션/누유)의 상세 입력창도 동일하게 내용에 맞춰 늘어나도록 —
   // idx별로 따로 관리(항목마다 길이가 다를 수 있음)
   const [checklistFieldHeights, setChecklistFieldHeights] = useState<Record<number, number>>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce 타이머
@@ -704,10 +858,6 @@ export default function CarEvaluationSheet() {
       setOptionsDesc(
         ev.optionsDesc !== "이상 없음" ? (ev.optionsDesc ?? "") : "",
       );
-      setShowDrive(ev.driveDesc && ev.driveDesc !== "이상 없음");
-      setDriveDesc(ev.driveDesc !== "이상 없음" ? (ev.driveDesc ?? "") : "");
-      setShowEngine(ev.engineDesc && ev.engineDesc !== "이상 없음");
-      setEngineDesc(ev.engineDesc !== "이상 없음" ? (ev.engineDesc ?? "") : "");
       setMemo(ev.memo ?? "");
 
       // 이미지
@@ -715,7 +865,8 @@ export default function CarEvaluationSheet() {
       setDashboardImage(imgs.dashboard?.[0] ?? null);
       setRegImage(imgs.registration?.[0] ?? null);
       setVinImage(imgs.vin?.[0] ?? null);
-      setChecklistPhotos(d.checklistPhotos || { warning: [], options: [], leak: [], drive: [], engine: [] });
+      setChecklistPhotos(d.checklistPhotos || { warning: [], options: [], leak: [] });
+      setIssueVideo(d.videoUrls?.[0] ?? d.engineNoiseVideoUrl ?? null);
       setImages({
         exterior: imgs.exterior ?? [],
         wheel: imgs.wheel ?? [],
@@ -776,6 +927,7 @@ export default function CarEvaluationSheet() {
     regImage,
     vinImage,
     checklistPhotos,
+    issueVideo,
     images,
     mileage,
     color,
@@ -792,13 +944,9 @@ export default function CarEvaluationSheet() {
     showWarning,
     showLeak,
     showOptions,
-    showDrive,
-    showEngine,
     warningDesc,
     leakDesc,
     optionsDesc,
-    driveDesc,
-    engineDesc,
     mirrorMarkers,
     checkedDamages,
     extraPhotos,
@@ -814,6 +962,7 @@ export default function CarEvaluationSheet() {
         regImage,
         vinImage,
         checklistPhotos,
+        issueVideo,
         images,
         mileage,
         color,
@@ -830,13 +979,9 @@ export default function CarEvaluationSheet() {
         showWarning,
         showLeak,
         showOptions,
-        showDrive,
-        showEngine,
         warningDesc,
         leakDesc,
         optionsDesc,
-        driveDesc,
-        engineDesc,
         // memo state는 onBlur 시에만 갱신되는데, 뒤로가기 등으로 blur가 안 일어난 채
         // 저장이 트리거되면 방금 타이핑한 내용이 아니라 그 전 값으로 덮어써서 사라져
         // 보이는 버그가 있었음 — 항상 최신인 memoRef를 우선 사용
@@ -861,7 +1006,8 @@ export default function CarEvaluationSheet() {
         setDashboardImage(p.dashboardImage || null);
         setRegImage(p.regImage || null);
         setVinImage(p.vinImage || null);
-        setChecklistPhotos(p.checklistPhotos || { warning: [], options: [], leak: [], drive: [], engine: [] });
+        setChecklistPhotos(p.checklistPhotos || { warning: [], options: [], leak: [] });
+        setIssueVideo(p.issueVideo || null);
         setImages(
           p.images || {
             exterior: [],
@@ -889,13 +1035,9 @@ export default function CarEvaluationSheet() {
         setShowWarning(p.showWarning || false);
         setShowLeak(p.showLeak || false);
         setShowOptions(p.showOptions || false);
-        setShowDrive(p.showDrive || false);
-        setShowEngine(p.showEngine || false);
         setWarningDesc(p.warningDesc || "");
         setLeakDesc(p.leakDesc || "");
         setOptionsDesc(p.optionsDesc || "");
-        setDriveDesc(p.driveDesc || "");
-        setEngineDesc(p.engineDesc || "");
         setMemo(p.memo || "");
         setExtraPhotos(p.extraPhotos || []);
         setMirrorMarkers(
@@ -949,7 +1091,7 @@ export default function CarEvaluationSheet() {
     }
   };
 
-  // ─── 확인사항 항목별 사진(경고등/옵션/누유/주행중 이상, 각 최대 3장) ───────────────
+  // ─── 확인사항 항목별 사진(경고등/옵션/누유, 각 최대 3장) ───────────────
   const pickChecklistPhoto = async (photoKey: string) => {
     const already = checklistPhotos[photoKey]?.length || 0;
     const remaining = MAX_CHECKLIST_PHOTOS - already;
@@ -1026,6 +1168,57 @@ export default function CarEvaluationSheet() {
       ...prev,
       [photoKey]: (prev[photoKey] || []).filter((_, i) => i !== index),
     }));
+  };
+
+  // ─── 영상 추가 (엔진 이음/조향 이음/옵션작동 이상 등, 한 건만 등록) ───────────────
+  // 자체 촬영 모달(IssueVideoRecorderModal)에서 녹화가 끝나면 호출됨
+  const handleIssueVideoRecorded = (uri: string) => {
+    setIssueVideo(uri);
+    uploadIssueVideo(uri);
+  };
+
+  const uploadIssueVideo = async (uri: string, attempt = 1) => {
+    if (isPractice) return;
+    setIssueVideoUploading(true);
+    try {
+      const formData = new FormData();
+      const fileName = `issue_video_${Date.now()}.mp4`;
+
+      // @ts-ignore
+      formData.append("file", {
+        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
+        name: fileName,
+        type: "video/mp4",
+      });
+      formData.append("requestId", String(requestId || ""));
+      formData.append("category", "issue_video");
+      formData.append("carNumber", String(carNumber || "미등록"));
+
+      const res = await fetch(`${API_BASE_URL}/external/inspection/upload`, {
+        method: "POST",
+        body: formData,
+        headers: { Accept: "application/json" },
+      });
+
+      if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+      const result = await res.json();
+      if (result.url) {
+        setIssueVideo((prev) => (prev === uri ? result.url : prev));
+      }
+    } catch (e) {
+      console.error("🔥 Upload Error (Issue Video):", e);
+      if (attempt < 3) {
+        setTimeout(() => uploadIssueVideo(uri, attempt + 1), 1500 * attempt);
+        return;
+      }
+      Alert.alert("업로드 실패", "영상 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+    } finally {
+      setIssueVideoUploading(false);
+    }
+  };
+
+  const handleDeleteIssueVideo = () => {
+    setIssueVideo(null);
   };
 
   // 3. 사진 삭제 함수
@@ -1115,9 +1308,10 @@ export default function CarEvaluationSheet() {
           warning: onlyS3(checklistPhotos.warning || []),
           options: onlyS3(checklistPhotos.options || []),
           leak: onlyS3(checklistPhotos.leak || []),
-          drive: onlyS3(checklistPhotos.drive || []),
-          engine: onlyS3(checklistPhotos.engine || []),
         },
+        // 엔진 이음/조향 이음/옵션작동 이상 등 확인용 영상 — 백엔드 Inspection.videoUrls와
+        // 짝을 이루는 최상위 필드(photos 안에 넣으면 서버가 무시하고 저장 안 함)
+        videoUrls: onlyS3(issueVideo ? [issueVideo] : []),
         // 차키
         keys: {
           smart: smartKey,
@@ -1151,8 +1345,8 @@ export default function CarEvaluationSheet() {
           warningDesc: showWarning ? warningDesc : "이상 없음",
           leakDesc: showLeak ? leakDesc : "이상 없음",
           optionsDesc: showOptions ? optionsDesc : "이상 없음",
-          driveDesc: showDrive ? driveDesc : "이상 없음",
-          engineDesc: showEngine ? engineDesc : "이상 없음",
+          driveDesc: "이상 없음",
+          engineDesc: "이상 없음",
         },
         memo: memoRef.current || memo, // onBlur 전 제출 시에도 최신값 반영
       };
@@ -2566,24 +2760,6 @@ export default function CarEvaluationSheet() {
                     },
                   ]
                 : []),
-              {
-                label: "주행중 이상 증상",
-                state: showDrive,
-                setState: setShowDrive,
-                val: driveDesc,
-                setVal: setDriveDesc,
-                placeholder: "증상 내용을 입력하세요",
-                photoKey: "drive",
-              },
-              {
-                label: "엔진룸 이상",
-                state: showEngine,
-                setState: setShowEngine,
-                val: engineDesc,
-                setVal: setEngineDesc,
-                placeholder: "이상 내용을 입력하세요",
-                photoKey: "engine",
-              },
             ].map((item, idx) => (
               <View key={idx}>
                 <TouchableOpacity
@@ -2824,6 +3000,86 @@ export default function CarEvaluationSheet() {
               ],
             )}
 
+            {/* ═══ 영상 추가 ═══════════════════════════════════════════════ */}
+            <View style={styles.catBox}>
+              <Text style={styles.catTitle}>영상 추가</Text>
+              <Text style={[styles.catCountText, { marginBottom: 8 }]}>
+                엔진 이음, 핸들 조향시 이음, 옵션작동 이상 영상등을 올려주세요
+              </Text>
+              {!isViewMode && (
+                <View style={styles.videoGuideBox}>
+                  <Text style={styles.videoGuideItem}>✔ 소리가 잘 담기도록 15초 이내로 촬영</Text>
+                  <Text style={styles.videoGuideItem}>✔ 문제 부위가 화면에 잘 보이게 촬영</Text>
+                </View>
+              )}
+              <View style={styles.photoGrid}>
+                {issueVideo ? (
+                  <View style={styles.photoWrapperGrid}>
+                    <TouchableOpacity
+                      style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden" }}
+                      activeOpacity={0.85}
+                      onPress={() => !issueVideoUploading && setIssueVideoModalVisible(true)}
+                      disabled={issueVideoUploading}
+                    >
+                      {issueVideoUploading ? (
+                        <View style={styles.uploadingOverlay}>
+                          <ActivityIndicator size="small" color="#fff" />
+                        </View>
+                      ) : (
+                        <>
+                          <VideoGridThumb uri={issueVideo} />
+                          <View style={styles.uploadingOverlay}>
+                            <Ionicons name="play-circle" size={28} color="rgba(255,255,255,0.9)" />
+                          </View>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    {!isViewMode && (
+                      <TouchableOpacity
+                        style={styles.removeBadgeGrid}
+                        onPress={() => Alert.alert("영상 삭제", "등록된 영상을 삭제할까요?", [
+                          { text: "삭제", style: "destructive", onPress: handleDeleteIssueVideo },
+                          { text: "취소", style: "cancel" },
+                        ])}
+                      >
+                        <Ionicons name="close-circle" size={22} color="#ff4d4d" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : (
+                  !isViewMode && (
+                    <TouchableOpacity
+                      style={[styles.photoWrapperGrid, styles.gridAddBtn]}
+                      onPress={() => setIssueVideoRecorderVisible(true)}
+                    >
+                      <Ionicons name="videocam" size={22} color="#666" />
+                      <Text style={styles.gridAddText}>영상추가</Text>
+                    </TouchableOpacity>
+                  )
+                )}
+              </View>
+            </View>
+
+            {/* 영상 전체화면 모달 */}
+            <Modal visible={issueVideoModalVisible} transparent animationType="fade" onRequestClose={() => setIssueVideoModalVisible(false)}>
+              <View style={{ flex: 1, backgroundColor: "#000" }}>
+                <TouchableOpacity
+                  style={{ position: "absolute", top: 50, right: 20, zIndex: 999 }}
+                  onPress={() => setIssueVideoModalVisible(false)}
+                >
+                  <Ionicons name="close-circle" size={36} color="#fff" />
+                </TouchableOpacity>
+                {issueVideo && <VideoFullscreenPlayer uri={issueVideo} />}
+              </View>
+            </Modal>
+
+            {/* 이상확인 영상 자체 촬영 모달 */}
+            <IssueVideoRecorderModal
+              visible={issueVideoRecorderVisible}
+              onClose={() => setIssueVideoRecorderVisible(false)}
+              onRecorded={handleIssueVideoRecorded}
+            />
+
             {/* ═══ 6. 기타 의견 ═══════════════════════════════════════════════ */}
             <View style={styles.catBox}>
               <Text style={styles.catTitle}>기타 의견</Text>
@@ -3046,6 +3302,15 @@ const styles = StyleSheet.create({
   },
   catTitle: { color: "#fff", fontSize: 15, fontWeight: "bold" },
   catCountText: { color: "#888", fontSize: 12 },
+  videoGuideBox: {
+    backgroundColor: "#0d1f3c",
+    borderWidth: 1,
+    borderColor: "#2563eb",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  videoGuideItem: { color: "#cbd5e1", fontSize: 12, lineHeight: 20 },
   imageGrid: { flexDirection: "row", alignItems: "center" },
   smallCamBtn: {
     width: TILE_SIZE,

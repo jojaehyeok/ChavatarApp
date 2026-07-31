@@ -26,6 +26,7 @@
       "package": "com.rabbitjindan.ChavatarApp",
       "permissions": [
         "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_IMAGES",
@@ -46,6 +47,14 @@
         {
           "photosPermission": "진단 사진 선택을 위해 사진첩 접근 권한이 필요합니다.",
           "cameraPermission": "진단 사진 촬영을 위해 카메라 접근 권한이 필요합니다."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "이상확인 영상 촬영을 위해 카메라 접근 권한이 필요합니다.",
+          "microphonePermission": "엔진음 등 소리를 담기 위해 마이크 접근 권한이 필요합니다.",
+          "recordAudioAndroid": true
         }
       ],
       [
