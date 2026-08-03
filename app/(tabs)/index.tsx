@@ -1017,7 +1017,7 @@ export default function DiagnosisManagement() {
                 }
               </View>
               <View style={styles.infoSection}>
-                {!!item.adminMemo && (
+                {!!item.adminMemo && activeTab !== 'completed' && (
                   <View style={[styles.adminMemoBox, { backgroundColor: isDark ? 'rgba(255,193,7,0.12)' : '#FFF8E1', borderColor: isDark ? 'rgba(255,193,7,0.35)' : '#FFE082' }]}>
                     <Ionicons name="megaphone-outline" size={14} color="#F5A623" />
                     <Text style={[styles.adminMemoText, { color: isDark ? '#FFD54F' : '#8A6300' }]}>{item.adminMemo}</Text>
