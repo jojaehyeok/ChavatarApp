@@ -275,6 +275,11 @@ const CANCEL_REASONS = [
   { id: '진단사 사정', label: '진단사 사정' },
   { id: '판매자의 예약 취소', label: '판매자의 예약 취소' },
   { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
+  {
+    id: '고객 일정변경(재배정 필요)',
+    label: '고객 일정변경 (다른 진단사 재배정)',
+    note: '판매자가 다른 날짜/시간을 요청했는데 내가 갈 수 없는 경우 선택해주세요. 페널티 없이 그 시간대에 가능한 다른 진단사에게 바로 넘어갑니다.',
+  },
 ];
 
 export default function DiagnosisManagement() {
