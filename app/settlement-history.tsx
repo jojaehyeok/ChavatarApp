@@ -206,7 +206,7 @@ export default function SettlementHistoryScreen() {
                   <View style={[s.row, { backgroundColor: card, borderColor: border }]}>
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={[s.carModel, { color: text }]}>{item.carModel || '차량 정보 없음'}</Text>
+                        <Text style={[s.carModel, { color: text }]} numberOfLines={1} ellipsizeMode="tail">{item.carModel || '차량 정보 없음'}</Text>
                         {isManagement && (
                           <View style={s.tag}><Text style={s.tagText}>관리수당</Text></View>
                         )}
@@ -267,13 +267,13 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
     marginHorizontal: 16, marginBottom: 8, padding: 16, borderRadius: 12, borderWidth: 1,
   },
-  carModel: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  carModel: { fontSize: 15, fontWeight: '700', marginBottom: 4, flexShrink: 1 },
   carNumber: { fontSize: 13 },
   memo: { fontSize: 11, marginTop: 4 },
   date: { fontSize: 12, marginBottom: 4 },
   fee: { fontSize: 15, fontWeight: '800' },
   breakdown: { fontSize: 10, marginTop: 2 },
   claim: { fontSize: 11, fontWeight: '700', color: '#e53e3e', marginTop: 2 },
-  tag: { backgroundColor: '#63489a', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  tag: { backgroundColor: '#63489a', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, flexShrink: 0 },
   tagText: { color: '#fff', fontSize: 10, fontWeight: '700' },
 });
