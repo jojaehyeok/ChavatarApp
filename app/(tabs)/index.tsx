@@ -273,7 +273,11 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
 
 const CANCEL_REASONS = [
   { id: '진단사 사정', label: '진단사 사정' },
-  { id: '판매자의 예약 취소', label: '판매자의 예약 취소' },
+  {
+    id: '판매자의 예약 취소',
+    label: '판매자의 예약 취소',
+    note: '진단일시가 내 활성시간(스케줄) 안이면 페널티가 부과됩니다. 활성시간 밖이면 페널티 없이 다른 진단사에게 재배정됩니다.',
+  },
   { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
   {
     id: '고객 일정변경(재배정 필요)',
@@ -933,7 +937,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.10</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.11</Text>
               </View>
             </Animated.View>
           </Pressable>
