@@ -511,6 +511,9 @@ export default function CarEvaluationSheet() {
   // ── 업로드 카운트 (전역 싱글톤 연동) ────────────────────────────────────
   const [uploadPending, setUploadPending] = useState(0);
   const [failedUploads, setFailedUploads] = useState<{ uri: string; categoryId: string }[]>([]);
+  // 시스템 Alert.alert는 안드로이드 DayNight 테마를 그대로 따라가서 이 앱의 다크 UI랑
+  // 안 어울리는 흰 팝업으로 뜬다 — 업로드 대기/실패 안내는 앱 톤에 맞는 커스텀 모달로 대체.
+  const [uploadAlert, setUploadAlert] = useState<{ title: string; message: string; danger?: boolean } | null>(null);
   const [poolVisible, setPoolVisible] = useState(24); // 60장이면 화면에 60개 Image를 동시에 그려서 버벅이므로 페이지네이션
   const [aiToast, setAiToast] = useState<string | null>(null);
   const aiToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -677,29 +680,14 @@ export default function CarEvaluationSheet() {
       aiToastTimer.current = setTimeout(() => setAiToast(null), 3000);
     };
     // 3회 재시도 후에도 실패하면 조용히 사라지지 않고 재시도 버튼으로 노출한다
-    // (사진이 조용히 유실되는 것보다 눈에 보이는 실패가 훨씬 낫다).
+    // (사진이 조용히 유실되는 것보다 눈에 보이는 실패가 훨씬 낫다). 이미지 상태(images/
+    // dashboardImage 등)에서 지우지 않고 그대로 둔다 — 실패한 로컬 썸네일이 계속 보여야
+    // failedUploads에 있는지로 "업로드중"과 "실패"를 구분해서 각 타일에 표시할 수 있다.
     _G.onFailed = (task) => {
       // "전체 초기화"로 이미 버려진 사진이면 실패 재시도 UI에 다시 띄우지 않는다
       if (discardedUris.current.has(task.uri)) {
         discardedUris.current.delete(task.uri);
         return;
-      }
-      if (task.categoryId === "extra_memo") {
-        setExtraPhotos((prev) => prev.filter((img) => img !== task.uri));
-      } else if (SINGLE_SLOT_CATS.includes(task.categoryId)) {
-        if (task.categoryId === "dashboard") setDashboardImage((prev) => (prev === task.uri ? null : prev));
-        else if (task.categoryId === "registration") setRegImage((prev) => (prev === task.uri ? null : prev));
-        else if (task.categoryId === "vin") setVinImage((prev) => (prev === task.uri ? null : prev));
-      } else {
-        setImages((prev) => {
-          const updated = { ...prev };
-          for (const key of Object.keys(updated)) {
-            if (updated[key].includes(task.uri)) {
-              updated[key] = updated[key].filter((img) => img !== task.uri);
-            }
-          }
-          return updated;
-        });
       }
       setFailedUploads((prev) => [...prev, { uri: task.uri, categoryId: task.categoryId }]);
     };
@@ -714,25 +702,18 @@ export default function CarEvaluationSheet() {
     };
   }, []);
 
-  // 3회 재시도 후에도 실패한 사진들을 한 번에 다시 큐에 올린다
+  // 3회 재시도 후에도 실패한 사진들을 한 번에 다시 큐에 올린다 — 실패해도 상태에서 안 지웠으므로
+  // failedUploads만 비우고 그대로 다시 큐에 넣으면 된다.
   const handleRetryFailed = () => {
     const toRetry = failedUploads;
     setFailedUploads([]);
-    toRetry.forEach((f) => {
-      if (f.categoryId === "extra_memo") {
-        setExtraPhotos((prev) => [...prev, f.uri]);
-      } else if (SINGLE_SLOT_CATS.includes(f.categoryId)) {
-        if (f.categoryId === "dashboard") setDashboardImage(f.uri);
-        else if (f.categoryId === "registration") setRegImage(f.uri);
-        else if (f.categoryId === "vin") setVinImage(f.uri);
-      } else {
-        setImages((prev) => ({
-          ...prev,
-          [f.categoryId]: [...(prev[f.categoryId] || []), f.uri],
-        }));
-      }
-      enqueueUpload(f.uri, f.categoryId);
-    });
+    toRetry.forEach((f) => enqueueUpload(f.uri, f.categoryId));
+  };
+
+  // 타일 하나만 콕 집어 재시도(실패 표시를 탭했을 때)
+  const retryOneFailed = (uri: string, categoryId: string) => {
+    setFailedUploads((prev) => prev.filter((f) => f.uri !== uri));
+    enqueueUpload(uri, categoryId);
   };
 
   // uploadUri: fetch에 쓸 URI, displayUri: state에 저장된 표시용 URI (생략 시 uploadUri와 동일)
@@ -1264,7 +1245,18 @@ export default function CarEvaluationSheet() {
           !regImage.startsWith("http") ||
           !vinImage.startsWith("http"))
       ) {
-        Alert.alert("업로드 중", "기본사진이 아직 업로드 중입니다. 잠시만 기다려주세요.");
+        const baseFailed = [dashboardImage, regImage, vinImage].some(
+          (uri) => uri && failedUploads.some((f) => f.uri === uri),
+        );
+        setUploadAlert(
+          baseFailed
+            ? {
+                title: "업로드 실패",
+                message: "기본사진 중 업로드에 실패한 사진이 있습니다. 빨간 테두리로 표시된 사진을 탭해서 재시도해주세요.",
+                danger: true,
+              }
+            : { title: "업로드 중", message: "기본사진이 아직 업로드 중입니다. 잠시만 기다려주세요." },
+        );
         return;
       }
       setEvaluationStarted(true);
@@ -1288,11 +1280,19 @@ export default function CarEvaluationSheet() {
       Alert.alert("알림", "예상 복구비용을 입력해주세요.");
       return;
     }
+    if (failedUploads.length > 0) {
+      setUploadAlert({
+        title: "업로드 실패",
+        message: `업로드에 실패한 사진이 ${failedUploads.length}장 있습니다. 빨간 테두리로 표시된 사진을 탭해서 재시도한 뒤 다시 시도해주세요.`,
+        danger: true,
+      });
+      return;
+    }
     if (uploadPending > 0) {
-      Alert.alert(
-        "업로드 중",
-        `아직 사진 ${uploadPending}장이 업로드 중입니다. 완료될 때까지 잠시만 기다려주세요.`,
-      );
+      setUploadAlert({
+        title: "업로드 중",
+        message: `아직 사진 ${uploadPending}장이 업로드 중입니다. 완료될 때까지 잠시만 기다려주세요.`,
+      });
       return;
     }
 
@@ -1746,6 +1746,9 @@ export default function CarEvaluationSheet() {
               });
               return next;
             });
+            // 실패 배너에 남아있는 항목도 같이 지운다 — 안 지우면 방금 삭제한 사진을
+            // "재시도"로 눌렀을 때 이미 비운 카테고리에 유령처럼 다시 나타난다.
+            setFailedUploads((prev) => prev.filter((f) => !all.includes(f.uri)));
           },
         },
       ],
@@ -1843,16 +1846,20 @@ export default function CarEvaluationSheet() {
     onRemove: () => void;
   }) => {
     // "진단 시작"이 이 사진만 계속 막고 있어도 썸네일이 완료된 사진과 똑같이 보여서
-    // 현장에서 뭐가 문제인지 못 찾는 경우가 있었다 — 업로드 중인 슬롯을 빨간 테두리+라벨로
-    // 눈에 띄게 표시해 바로 찾을 수 있게 한다.
-    const isUploading = !!uri && !isPractice && !uri.startsWith("http");
+    // 현장에서 뭐가 문제인지 못 찾는 경우가 있었다 — 업로드 중인/실패한 슬롯을 빨간
+    // 테두리+라벨로 눈에 띄게 표시해 바로 찾을 수 있게 한다. 3회 재시도 후에도 실패하면
+    // failedUploads에 남아있으므로(_G.onFailed가 상태를 안 지움) 그걸로 구분한다.
+    const isFailed = !!uri && failedUploads.some((f) => f.uri === uri);
+    const isUploading = !!uri && !isPractice && !uri.startsWith("http") && !isFailed;
     return (
       <View style={styles.singleSlotWrapper}>
         <View style={styles.dashBoxWrapper}>
           <TouchableOpacity
-            style={[styles.dashBox, isUploading && styles.dashBoxUploading]}
+            style={[styles.dashBox, (isUploading || isFailed) && styles.dashBoxUploading]}
             onPress={() => {
-              if (uri) {
+              if (isFailed && uri) {
+                retryOneFailed(uri, categoryId);
+              } else if (uri) {
                 // 이미지 있으면 항상 확대 보기
                 setViewerImages([uri]);
                 setViewerIndex(0);
@@ -1862,7 +1869,7 @@ export default function CarEvaluationSheet() {
               }
             }}
             onLongPress={() => {
-              if (!isViewMode) openCustomPicker(categoryId);
+              if (!isViewMode && !isFailed) openCustomPicker(categoryId);
             }}
           >
             {uri ? (
@@ -1883,6 +1890,12 @@ export default function CarEvaluationSheet() {
                 <Text style={styles.uploadingOverlayText}>업로드중</Text>
               </View>
             )}
+            {isFailed && (
+              <View style={styles.uploadingOverlay}>
+                <Ionicons name="warning" size={18} color="#ff4d4d" />
+                <Text style={styles.uploadingOverlayText}>실패·탭하여 재시도</Text>
+              </View>
+            )}
           </TouchableOpacity>
           {uri && !isViewMode && (
             <TouchableOpacity style={styles.removeBadgeSingle} onPress={onRemove}>
@@ -1890,8 +1903,8 @@ export default function CarEvaluationSheet() {
             </TouchableOpacity>
           )}
         </View>
-        <Text style={[styles.slotLabel, isUploading && styles.slotLabelUploading]}>
-          {label}{isUploading ? " (업로드중)" : ""}
+        <Text style={[styles.slotLabel, (isUploading || isFailed) && styles.slotLabelUploading]}>
+          {label}{isUploading ? " (업로드중)" : isFailed ? " (실패)" : ""}
         </Text>
       </View>
     );
@@ -2113,6 +2126,30 @@ export default function CarEvaluationSheet() {
                 >
                   확인
                 </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* ── 업로드 대기/실패 안내 (시스템 Alert 대신 앱 다크테마에 맞춘 커스텀 모달) ── */}
+        <Modal
+          visible={!!uploadAlert}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setUploadAlert(null)}
+        >
+          <View style={styles.alertOverlay}>
+            <View style={styles.alertBox}>
+              <Ionicons
+                name={uploadAlert?.danger ? "warning" : "cloud-upload"}
+                size={28}
+                color={uploadAlert?.danger ? "#ff4d4d" : "#63489a"}
+                style={{ alignSelf: "center", marginBottom: 8 }}
+              />
+              <Text style={styles.alertTitle}>{uploadAlert?.title}</Text>
+              <Text style={styles.alertMessage}>{uploadAlert?.message}</Text>
+              <TouchableOpacity style={styles.alertBtn} onPress={() => setUploadAlert(null)}>
+                <Text style={styles.alertBtnText}>확인</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2896,7 +2933,8 @@ export default function CarEvaluationSheet() {
                         </TouchableOpacity>
                       )}
                       {visible.map((photo) => {
-                        const isUploading = !isPractice && !photo.uri.startsWith("http");
+                        const isFailed = failedUploads.some((f) => f.uri === photo.uri);
+                        const isUploading = !isPractice && !photo.uri.startsWith("http") && !isFailed;
                         const globalIdx = poolPhotos.findIndex(
                           (p) => p.catId === photo.catId && p.catIdx === photo.catIdx,
                         );
@@ -2908,11 +2946,18 @@ export default function CarEvaluationSheet() {
                             style={styles.photoWrapperGrid}
                           >
                             <TouchableOpacity
-                              style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden" }}
+                              style={[
+                                { width: "100%", height: "100%", borderRadius: 8, overflow: "hidden" },
+                                isFailed && styles.dashBoxUploading,
+                              ]}
                               activeOpacity={0.85}
-                              onPress={() => openViewer(allUris, globalIdx)}
+                              onPress={() =>
+                                isFailed
+                                  ? retryOneFailed(photo.uri, photo.catId)
+                                  : openViewer(allUris, globalIdx)
+                              }
                               onLongPress={() =>
-                                !isViewMode && !isUploading &&
+                                !isViewMode && !isUploading && !isFailed &&
                                 handleSetAsCover(photo.catId, photo.catIdx)
                               }
                             >
@@ -2928,8 +2973,14 @@ export default function CarEvaluationSheet() {
                                   <ActivityIndicator size="small" color="#fff" />
                                 </View>
                               )}
+                              {isFailed && (
+                                <View style={[styles.uploadingOverlay, styles.failedOverlay]}>
+                                  <Ionicons name="warning" size={16} color="#ff4d4d" />
+                                  <Text style={styles.uploadingOverlayText}>재시도</Text>
+                                </View>
+                              )}
                             </TouchableOpacity>
-                            {catInfo && !isUploading && (
+                            {catInfo && !isUploading && !isFailed && (
                               <TouchableOpacity
                                 style={[styles.catBadge, { backgroundColor: badgeColor }]}
                                 onPress={() => !isViewMode && setFeedbackTarget(photo)}
@@ -3121,28 +3172,48 @@ export default function CarEvaluationSheet() {
 
               {/* 추가된 사진 리스트 (클릭 시 뷰어 연결) */}
               <View style={styles.photoGrid}>
-                {extraPhotos.map((uri, index) => (
-                  <View key={index} style={styles.photoWrapperGrid}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setViewerImages(extraPhotos);
-                        setViewerIndex(index);
-                        setViewerVisible(true);
-                      }}
-                    >
-                      <Image source={{ uri }} style={styles.photoItemGrid} />
-                    </TouchableOpacity>
-
-                    {!isViewMode && (
+                {extraPhotos.map((uri, index) => {
+                  const isFailed = failedUploads.some((f) => f.uri === uri);
+                  const isUploading = !isPractice && !uri.startsWith("http") && !isFailed;
+                  return (
+                    <View key={index} style={styles.photoWrapperGrid}>
                       <TouchableOpacity
-                        style={styles.removeBadgeGrid}
-                        onPress={() => removeExtraPhoto(index)}
+                        style={isFailed && styles.dashBoxUploading}
+                        onPress={() => {
+                          if (isFailed) {
+                            retryOneFailed(uri, "extra_memo");
+                            return;
+                          }
+                          setViewerImages(extraPhotos);
+                          setViewerIndex(index);
+                          setViewerVisible(true);
+                        }}
                       >
-                        <Ionicons name="close-circle" size={22} color="#ff4d4d" />
+                        <Image source={{ uri }} style={styles.photoItemGrid} />
+                        {isUploading && (
+                          <View style={styles.uploadingOverlay}>
+                            <ActivityIndicator size="small" color="#fff" />
+                          </View>
+                        )}
+                        {isFailed && (
+                          <View style={[styles.uploadingOverlay, styles.failedOverlay]}>
+                            <Ionicons name="warning" size={16} color="#ff4d4d" />
+                            <Text style={styles.uploadingOverlayText}>재시도</Text>
+                          </View>
+                        )}
                       </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
+
+                      {!isViewMode && (
+                        <TouchableOpacity
+                          style={styles.removeBadgeGrid}
+                          onPress={() => removeExtraPhoto(index)}
+                        >
+                          <Ionicons name="close-circle" size={22} color="#ff4d4d" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })}
               </View>
             </View>
 
@@ -3464,6 +3535,27 @@ const styles = StyleSheet.create({
   },
   modalTitle: { color: "#fff", fontWeight: "700", fontSize: 16, padding: 18 },
   modalDivider: { height: 1, backgroundColor: "#333" },
+  // 업로드 대기/실패 안내용 커스텀 알림(시스템 Alert 대체) — 화면 가운데 작은 카드
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 32,
+  },
+  alertBox: {
+    backgroundColor: "#1a1a1a",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#333",
+    padding: 22,
+    width: "100%",
+    maxWidth: 320,
+  },
+  alertTitle: { color: "#fff", fontWeight: "700", fontSize: 17, textAlign: "center", marginBottom: 8 },
+  alertMessage: { color: "#ccc", fontSize: 14, lineHeight: 20, textAlign: "center", marginBottom: 18 },
+  alertBtn: { backgroundColor: "#fff", borderRadius: 10, paddingVertical: 13, alignItems: "center" },
+  alertBtnText: { color: "#000", fontWeight: "700", fontSize: 15 },
   symbolBtn: {
     flex: 1,
     margin: 4,
@@ -3620,6 +3712,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   uploadingOverlayText: { color: "#fff", fontSize: 9, fontWeight: "700", marginTop: 2 },
+  failedOverlay: { backgroundColor: "rgba(255,77,77,0.35)" },
   uploadBadge: {
     flexDirection: "row",
     alignItems: "center",
