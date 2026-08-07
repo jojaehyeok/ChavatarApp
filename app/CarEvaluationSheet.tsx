@@ -57,6 +57,10 @@ interface _UploadTask {
   carNumber: string;
 }
 const SINGLE_IMG_CATS = ['dashboard', 'registration', 'vin', 'extra_memo'];
+// 계기판/등록증/보험이력 — images 맵이 아니라 dashboardImage/regImage/vinImage 별도 state로
+// 관리되는 진짜 "단일 슬롯" 카테고리만. extra_memo는 여기 포함하면 안 됨(별도 배열 state라
+// SINGLE_IMG_CATS와 처리 로직이 다름).
+const SINGLE_SLOT_CATS = ['dashboard', 'registration', 'vin'];
 
 const _G = {
   queue: [] as _UploadTask[],
@@ -634,6 +638,15 @@ export default function CarEvaluationSheet() {
 
     // 컴포넌트 마운트: 콜백 등록
     _G.onResult = (uri, s3url, cat) => {
+      // 계기판/등록증/보험이력(단일 슬롯)은 images 맵이 아니라 dashboardImage/regImage/vinImage
+      // 별도 state를 쓰므로 배치 로직을 안 타고 바로 반영한다 — 그 사이 다른 사진으로
+      // 교체됐으면(prev !== uri) 덮어쓰지 않는다.
+      if (SINGLE_SLOT_CATS.includes(cat)) {
+        if (cat === "dashboard") setDashboardImage((prev) => (prev === uri ? s3url : prev));
+        else if (cat === "registration") setRegImage((prev) => (prev === uri ? s3url : prev));
+        else if (cat === "vin") setVinImage((prev) => (prev === uri ? s3url : prev));
+        return;
+      }
       // 업로드 완료 시 대기 중인 피드백 있으면 전송
       const pending = pendingFeedbacks.current.filter(f => f.localUri === uri);
       pending.forEach(f => {
@@ -673,6 +686,10 @@ export default function CarEvaluationSheet() {
       }
       if (task.categoryId === "extra_memo") {
         setExtraPhotos((prev) => prev.filter((img) => img !== task.uri));
+      } else if (SINGLE_SLOT_CATS.includes(task.categoryId)) {
+        if (task.categoryId === "dashboard") setDashboardImage((prev) => (prev === task.uri ? null : prev));
+        else if (task.categoryId === "registration") setRegImage((prev) => (prev === task.uri ? null : prev));
+        else if (task.categoryId === "vin") setVinImage((prev) => (prev === task.uri ? null : prev));
       } else {
         setImages((prev) => {
           const updated = { ...prev };
@@ -702,13 +719,17 @@ export default function CarEvaluationSheet() {
     const toRetry = failedUploads;
     setFailedUploads([]);
     toRetry.forEach((f) => {
-      if (f.categoryId !== "extra_memo") {
+      if (f.categoryId === "extra_memo") {
+        setExtraPhotos((prev) => [...prev, f.uri]);
+      } else if (SINGLE_SLOT_CATS.includes(f.categoryId)) {
+        if (f.categoryId === "dashboard") setDashboardImage(f.uri);
+        else if (f.categoryId === "registration") setRegImage(f.uri);
+        else if (f.categoryId === "vin") setVinImage(f.uri);
+      } else {
         setImages((prev) => ({
           ...prev,
           [f.categoryId]: [...(prev[f.categoryId] || []), f.uri],
         }));
-      } else {
-        setExtraPhotos((prev) => [...prev, f.uri]);
       }
       enqueueUpload(f.uri, f.categoryId);
     });
@@ -1489,7 +1510,7 @@ export default function CarEvaluationSheet() {
       if (categorySnapshot === "dashboard") setDashboardImage(uri);
       else if (categorySnapshot === "registration") setRegImage(uri);
       else if (categorySnapshot === "vin") setVinImage(uri);
-      uploadSingleImage(uri, categorySnapshot);
+      enqueueUpload(uri, categorySnapshot);
     } else if (categorySnapshot === "exterior") {
       // 풀(기본 사진)의 단일 "사진추가" 버튼은 항상 "exterior"로 들어온다 —
       // 실제 카테고리는 지금까지 쌓인 개수를 기준으로 순서대로 배정한다.
@@ -1585,8 +1606,9 @@ export default function CarEvaluationSheet() {
           else if (categoryId === "registration") setRegImage(uri);
           else if (categoryId === "vin") setVinImage(uri);
 
-          // 서버 업로드 실행
-          uploadSingleImage(uri, categoryId);
+          // 서버 업로드 실행 — 전역 큐를 타므로 화면을 나가도 업로드가 계속되고,
+          // 완료 결과는 언마운트 여부와 무관하게 _G.onResult에서 dashboardImage 등에 반영된다.
+          enqueueUpload(uri, categoryId);
         } else if (categoryId === "exterior") {
           // 풀(기본 사진)의 단일 진입점 — 지금까지 쌓인 개수 기준으로 순서대로 배정
           const assigned = assignPoolCategories(images, newUris);
@@ -1616,67 +1638,6 @@ export default function CarEvaluationSheet() {
     }
   };
 
-  const SINGLE_CAT_LABEL: Record<string, string> = {
-    dashboard: "계기판",
-    registration: "자동차등록증",
-    vin: "보험이력",
-  };
-
-  // 현장 네트워크가 불안정할 수 있어 3회까지 재시도 — 그래도 실패하면 무한 로딩 대신
-  // 명확히 알리고 다시 눌러서 재업로드하도록 안내한다(기본사진은 진단 시작을 막는 필수값).
-  const uploadSingleImage = async (uri: string, categoryId: string, attempt = 1) => {
-    if (isPractice) return; // 연습 모드는 서버 업로드 없이 로컬 미리보기로 끝
-    try {
-      const formData = new FormData();
-      const fileName = `photo_${Date.now()}.jpg`;
-
-      // @ts-ignore
-      formData.append("file", {
-        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
-        name: fileName,
-        type: "image/jpeg",
-      });
-      formData.append("requestId", String(requestId || ""));
-      formData.append("category", categoryId);
-      formData.append("carNumber", String(carNumber || "미등록"));
-
-      console.log(`[단일] ${categoryId} 업로드 시작... (시도 ${attempt})`);
-
-      const res = await fetch(`${API_BASE_URL}/external/inspection/upload`, {
-        method: "POST",
-        body: formData,
-        headers: {
-          Accept: "application/json",
-          // 🌟 중요: Content-Type은 절대로 적지 않습니다.
-        },
-      });
-
-      if (!res.ok) {
-        const errorDetail = await res.text();
-        console.error("❌ 서버 에러 상세:", errorDetail);
-        throw new Error(`upload failed: ${res.status}`);
-      }
-
-      const result = await res.json();
-      console.log(`✅ [단일] ${categoryId} 업로드 성공:`, result.url);
-
-      if (result.url) {
-        if (categoryId === "dashboard") setDashboardImage(result.url);
-        else if (categoryId === "registration") setRegImage(result.url);
-        else if (categoryId === "vin") setVinImage(result.url);
-      }
-    } catch (e) {
-      console.error("🔥 Upload Error (Single):", e);
-      if (attempt < 3) {
-        setTimeout(() => uploadSingleImage(uri, categoryId, attempt + 1), 1500 * attempt);
-      } else {
-        Alert.alert(
-          "업로드 실패",
-          `${SINGLE_CAT_LABEL[categoryId] ?? "사진"} 업로드에 실패했습니다. 네트워크 상태를 확인하고 해당 사진을 다시 눌러 재업로드해주세요.`,
-        );
-      }
-    }
-  };
 
   // ─── 이미지 삭제 (S3 서버에서도 삭제) ──────────────────
   const handleDeleteImage = async (categoryId: string, index: number) => {
@@ -1880,47 +1841,61 @@ export default function CarEvaluationSheet() {
     label: string;
     categoryId: string;
     onRemove: () => void;
-  }) => (
-    <View style={styles.singleSlotWrapper}>
-      <View style={styles.dashBoxWrapper}>
-        <TouchableOpacity
-          style={styles.dashBox}
-          onPress={() => {
-            if (uri) {
-              // 이미지 있으면 항상 확대 보기
-              setViewerImages([uri]);
-              setViewerIndex(0);
-              setViewerVisible(true);
-            } else if (!isViewMode) {
-              openCustomPicker(categoryId);
-            }
-          }}
-          onLongPress={() => {
-            if (!isViewMode) openCustomPicker(categoryId);
-          }}
-        >
-          {uri ? (
-            <Image
-              source={{ uri }}
-              style={styles.fullImg}
-              resizeMode="cover"
-            />
-          ) : (
-            <>
-              <Ionicons name="camera" size={24} color="#666" />
-              <Text style={styles.subTxt}>{label}</Text>
-            </>
-          )}
-        </TouchableOpacity>
-        {uri && !isViewMode && (
-          <TouchableOpacity style={styles.removeBadgeSingle} onPress={onRemove}>
-            <Ionicons name="close-circle" size={24} color="#ff4d4d" />
+  }) => {
+    // "진단 시작"이 이 사진만 계속 막고 있어도 썸네일이 완료된 사진과 똑같이 보여서
+    // 현장에서 뭐가 문제인지 못 찾는 경우가 있었다 — 업로드 중인 슬롯을 빨간 테두리+라벨로
+    // 눈에 띄게 표시해 바로 찾을 수 있게 한다.
+    const isUploading = !!uri && !isPractice && !uri.startsWith("http");
+    return (
+      <View style={styles.singleSlotWrapper}>
+        <View style={styles.dashBoxWrapper}>
+          <TouchableOpacity
+            style={[styles.dashBox, isUploading && styles.dashBoxUploading]}
+            onPress={() => {
+              if (uri) {
+                // 이미지 있으면 항상 확대 보기
+                setViewerImages([uri]);
+                setViewerIndex(0);
+                setViewerVisible(true);
+              } else if (!isViewMode) {
+                openCustomPicker(categoryId);
+              }
+            }}
+            onLongPress={() => {
+              if (!isViewMode) openCustomPicker(categoryId);
+            }}
+          >
+            {uri ? (
+              <Image
+                source={{ uri }}
+                style={styles.fullImg}
+                resizeMode="cover"
+              />
+            ) : (
+              <>
+                <Ionicons name="camera" size={24} color="#666" />
+                <Text style={styles.subTxt}>{label}</Text>
+              </>
+            )}
+            {isUploading && (
+              <View style={styles.uploadingOverlay}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.uploadingOverlayText}>업로드중</Text>
+              </View>
+            )}
           </TouchableOpacity>
-        )}
+          {uri && !isViewMode && (
+            <TouchableOpacity style={styles.removeBadgeSingle} onPress={onRemove}>
+              <Ionicons name="close-circle" size={24} color="#ff4d4d" />
+            </TouchableOpacity>
+          )}
+        </View>
+        <Text style={[styles.slotLabel, isUploading && styles.slotLabelUploading]}>
+          {label}{isUploading ? " (업로드중)" : ""}
+        </Text>
       </View>
-      <Text style={styles.slotLabel}>{label}</Text>
-    </View>
-  );
+    );
+  };
 
   // ─── 사이드 미러 섹션 ────────────────────────────────────────────────────
   const SideMirrorSection = ({
@@ -3246,6 +3221,7 @@ const styles = StyleSheet.create({
   },
   singleSlotWrapper: { alignItems: "center" },
   slotLabel: { color: "#888", fontSize: 11, marginTop: 4 },
+  slotLabelUploading: { color: "#ff4d4d", fontWeight: "700" },
   dashBoxWrapper: { position: "relative", padding: 4 },
   dashBox: {
     width: 95,
@@ -3257,6 +3233,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  dashBoxUploading: { borderWidth: 2, borderColor: "#ff4d4d" },
   fullImg: { width: "100%", height: "100%", borderRadius: 8 },
   subTxt: { color: "#555", fontSize: 10, marginTop: 3 },
   removeBadgeSingle: {
@@ -3642,6 +3619,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  uploadingOverlayText: { color: "#fff", fontSize: 9, fontWeight: "700", marginTop: 2 },
   uploadBadge: {
     flexDirection: "row",
     alignItems: "center",
