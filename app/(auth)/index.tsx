@@ -4,7 +4,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-    Alert,
     Image,
     ImageBackground, KeyboardAvoidingView, Modal,
     Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput,
@@ -47,7 +46,7 @@ export default function LoadingLoginScreen() {
                     } else {
                         await AsyncStorage.multiRemove(['driverId', 'driverUsername', 'driverName']);
                         if (rejected) {
-                            Alert.alert('알림', '가입 신청이 거절되었습니다. 사유는 고객센터로 문의주세요.');
+                            showAlert('알림', '가입 신청이 거절되었습니다. 사유는 고객센터로 문의주세요.');
                         }
                     }
                 }
@@ -76,13 +75,11 @@ export default function LoadingLoginScreen() {
         experience: '',
     });
 
-    // ✅ 공통 알림 함수
+    // ✅ 공통 알림 함수 — 시스템 Alert.alert는 안드로이드 DayNight 테마를 따라가서 흰
+    // 팝업으로 뜨는데, 이 화면은 항상 밝은 톤(흰 카드) UI라 그것과 맞춘 커스텀 모달을 쓴다.
+    const [alertInfo, setAlertInfo] = useState<{ title: string; message: string } | null>(null);
     const showAlert = (title: string, message: string) => {
-        if (Platform.OS === 'web') {
-            alert(`${title}: ${message}`);
-        } else {
-            Alert.alert(title, message);
-        }
+        setAlertInfo({ title, message });
     };
 
     // ✅ 로그인 처리 함수
@@ -261,6 +258,24 @@ export default function LoadingLoginScreen() {
                     </ScrollView>
                 </SafeAreaView>
             </Modal>
+
+            {/* ── 알림 (시스템 Alert 대신 이 화면 톤에 맞춘 흰색 커스텀 모달) ── */}
+            <Modal
+                visible={!!alertInfo}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setAlertInfo(null)}
+            >
+                <View style={styles.alertOverlay}>
+                    <View style={styles.alertBox}>
+                        <Text style={styles.alertTitle}>{alertInfo?.title}</Text>
+                        <Text style={styles.alertMessage}>{alertInfo?.message}</Text>
+                        <TouchableOpacity style={styles.alertBtn} onPress={() => setAlertInfo(null)}>
+                            <Text style={styles.alertBtnText}>확인</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </ImageBackground>
     );
 }
@@ -302,5 +317,12 @@ const styles = StyleSheet.create({
     },
     licenseBtn: { height: 180, backgroundColor: '#eee', borderRadius: 8, justifyContent: 'center', alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: '#ccc', overflow: 'hidden' },
     modalSubmitButton: { backgroundColor: '#2563eb', padding: 16, borderRadius: 8, alignItems: 'center', marginTop: 10 },
-    modalSubmitButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' }
+    modalSubmitButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+    // 커스텀 알림 모달 — 이 화면은 흰 카드 톤이라 다크모달 대신 흰 배경으로 맞춤
+    alertOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 32 },
+    alertBox: { backgroundColor: '#fff', borderRadius: 16, padding: 22, width: '100%', maxWidth: 320 },
+    alertTitle: { color: '#000', fontWeight: '700', fontSize: 17, textAlign: 'center', marginBottom: 8 },
+    alertMessage: { color: '#444', fontSize: 14, lineHeight: 20, textAlign: 'center', marginBottom: 18 },
+    alertBtn: { backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+    alertBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });
