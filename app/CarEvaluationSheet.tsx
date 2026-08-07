@@ -20,7 +20,6 @@ import { useVideoPlayer, VideoView } from "expo-video";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   FlatList,
   Image,
@@ -523,8 +522,20 @@ export default function CarEvaluationSheet() {
   const [uploadPending, setUploadPending] = useState(0);
   const [failedUploads, setFailedUploads] = useState<{ uri: string; categoryId: string }[]>([]);
   // 시스템 Alert.alert는 안드로이드 DayNight 테마를 그대로 따라가서 이 앱의 다크 UI랑
-  // 안 어울리는 흰 팝업으로 뜬다 — 업로드 대기/실패 안내는 앱 톤에 맞는 커스텀 모달로 대체.
-  const [uploadAlert, setUploadAlert] = useState<{ title: string; message: string; danger?: boolean } | null>(null);
+  // 안 어울리는 흰 팝업으로 뜬다 — 이 화면의 모든 알림을 앱 톤에 맞는 커스텀 모달로 대체.
+  // showAlert(title, message, buttons)와 거의 같은 시그니처라 호출부 교체가 쉽다.
+  const [customAlert, setCustomAlert] = useState<{
+    title: string;
+    message: string;
+    buttons: { text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }[];
+  } | null>(null);
+  const showAlert = (
+    title: string,
+    message: string,
+    buttons?: { text: string; style?: "default" | "cancel" | "destructive"; onPress?: () => void }[],
+  ) => {
+    setCustomAlert({ title, message, buttons: buttons && buttons.length > 0 ? buttons : [{ text: "확인" }] });
+  };
   const [poolVisible, setPoolVisible] = useState(24); // 60장이면 화면에 60개 Image를 동시에 그려서 버벅이므로 페이지네이션
   const [aiToast, setAiToast] = useState<string | null>(null);
   const aiToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -541,7 +552,7 @@ export default function CarEvaluationSheet() {
   const saveCarInfo = async () => {
     const nextNumber = carEditNumber.trim();
     if (!nextNumber) {
-      Alert.alert("알림", "차량번호를 입력해주세요.");
+      showAlert("알림", "차량번호를 입력해주세요.");
       return;
     }
     const nextOwner = carEditOwner.trim() || "미정";
@@ -566,7 +577,7 @@ export default function CarEvaluationSheet() {
       setCarModel(nextModel);
       setCarEditVisible(false);
     } catch (e) {
-      Alert.alert("오류", "차량정보 저장 중 문제가 발생했습니다.");
+      showAlert("오류", "차량정보 저장 중 문제가 발생했습니다.");
     } finally {
       setSavingCarInfo(false);
     }
@@ -829,7 +840,7 @@ export default function CarEvaluationSheet() {
         if (elapsed > EDIT_LIMIT_MS) {
           const hoursAgo = Math.floor(elapsed / 3600000);
           const minutesAgo = Math.floor((elapsed % 3600000) / 60000);
-          Alert.alert(
+          showAlert(
             "수정 불가",
             `진단 완료 후 2시간이 지나면 수정할 수 없습니다.\n(완료 후 ${hoursAgo}시간 ${minutesAgo}분 경과)`,
             [{ text: "확인", onPress: () => router.back() }],
@@ -1145,7 +1156,7 @@ export default function CarEvaluationSheet() {
   const pickExtraImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      showAlert("권한 필요", "사진 접근 권한이 필요합니다.");
       return;
     }
 
@@ -1173,7 +1184,7 @@ export default function CarEvaluationSheet() {
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      showAlert("권한 필요", "사진 접근 권한이 필요합니다.");
       return;
     }
 
@@ -1233,7 +1244,7 @@ export default function CarEvaluationSheet() {
         setTimeout(() => uploadChecklistPhoto(uri, photoKey, attempt + 1), 1500 * attempt);
         return;
       }
-      Alert.alert("업로드 실패", "사진 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+      showAlert("업로드 실패", "사진 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
     }
   };
 
@@ -1285,7 +1296,7 @@ export default function CarEvaluationSheet() {
         setTimeout(() => uploadIssueVideo(uri, attempt + 1), 1500 * attempt);
         return;
       }
-      Alert.alert("업로드 실패", "영상 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+      showAlert("업로드 실패", "영상 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
     } finally {
       setIssueVideoUploading(false);
     }
@@ -1305,10 +1316,7 @@ export default function CarEvaluationSheet() {
     if (!evaluationStarted) {
       // 평가 시작 단계
       if (!dashboardImage || !regImage || !vinImage) {
-        Alert.alert(
-          "알림",
-          "기본사진(계기판, 자동차등록증, 보험이력)을 모두 업로드해주세요.",
-        );
+        showAlert("알림", "기본사진(계기판, 자동차등록증, 보험이력)을 모두 업로드해주세요.");
         return;
       }
       if (
@@ -1320,14 +1328,11 @@ export default function CarEvaluationSheet() {
         const baseFailed = [dashboardImage, regImage, vinImage].some(
           (uri) => uri && failedUploads.some((f) => f.uri === uri),
         );
-        setUploadAlert(
+        showAlert(
+          baseFailed ? "업로드 실패" : "업로드 중",
           baseFailed
-            ? {
-                title: "업로드 실패",
-                message: "기본사진 중 업로드에 실패한 사진이 있습니다. 빨간 테두리로 표시된 사진을 탭해서 재시도해주세요.",
-                danger: true,
-              }
-            : { title: "업로드 중", message: "기본사진이 아직 업로드 중입니다. 잠시만 기다려주세요." },
+            ? "기본사진 중 업로드에 실패한 사진이 있습니다. 빨간 테두리로 표시된 사진을 탭해서 재시도해주세요."
+            : "기본사진이 아직 업로드 중입니다. 잠시만 기다려주세요.",
         );
         return;
       }
@@ -1345,32 +1350,28 @@ export default function CarEvaluationSheet() {
       return;
     }
     if (!mileage) {
-      Alert.alert("알림", "주행거리를 입력해주세요.");
+      showAlert("알림", "주행거리를 입력해주세요.");
       return;
     }
     if (isInspection && !repairCost) {
-      Alert.alert("알림", "예상 복구비용을 입력해주세요.");
+      showAlert("알림", "예상 복구비용을 입력해주세요.");
       return;
     }
     if (failedUploads.length > 0) {
-      setUploadAlert({
-        title: "업로드 실패",
-        message: `업로드에 실패한 사진이 ${failedUploads.length}장 있습니다. 빨간 테두리로 표시된 사진을 탭해서 재시도한 뒤 다시 시도해주세요.`,
-        danger: true,
-      });
+      showAlert(
+        "업로드 실패",
+        `업로드에 실패한 사진이 ${failedUploads.length}장 있습니다. 빨간 테두리로 표시된 사진을 탭해서 재시도한 뒤 다시 시도해주세요.`,
+      );
       return;
     }
     if (uploadPending > 0) {
-      setUploadAlert({
-        title: "업로드 중",
-        message: `아직 사진 ${uploadPending}장이 업로드 중입니다. 완료될 때까지 잠시만 기다려주세요.`,
-      });
+      showAlert("업로드 중", `아직 사진 ${uploadPending}장이 업로드 중입니다. 완료될 때까지 잠시만 기다려주세요.`);
       return;
     }
 
     // 연습 모드는 여기서 끝 — 서버에 아무것도 보내지 않고, 다음 연습을 위해 로컬 임시저장도 지운다
     if (isPractice) {
-      Alert.alert("연습 완료", "연습 모드입니다 — 실제로 저장되지 않았습니다.", [
+      showAlert("연습 완료", "연습 모드입니다 — 실제로 저장되지 않았습니다.", [
         {
           text: "확인",
           onPress: () => {
@@ -1463,7 +1464,7 @@ export default function CarEvaluationSheet() {
       // 제출 완료 → 남은 업로드가 자동으로 서버에 패치
       _G.submittedId = String(requestId);
 
-      Alert.alert(
+      showAlert(
         isInspection ? "검수 완료" : "평가 완료",
         "저장 완료! 업로드 중인 사진은 자동으로 추가됩니다.",
         [
@@ -1478,7 +1479,7 @@ export default function CarEvaluationSheet() {
       );
     } catch (e) {
       console.error(e);
-      Alert.alert("오류", "전송 중 문제가 발생했습니다.");
+      showAlert("오류", "전송 중 문제가 발생했습니다.");
     }
   };
 
@@ -1510,7 +1511,7 @@ export default function CarEvaluationSheet() {
     // 이미지 권한 요청
     const ipPerm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (ipPerm.status !== "granted") {
-      Alert.alert("권한 필요", "사진첩 접근 권한을 허용해주세요.");
+      showAlert("권한 필요", "사진첩 접근 권한을 허용해주세요.");
       return;
     }
     // MediaLibrary 내부 권한 상태 동기화
@@ -1627,14 +1628,14 @@ export default function CarEvaluationSheet() {
       if (type === "camera") {
         const { status } = await ImagePicker.requestCameraPermissionsAsync();
         if (status !== "granted") {
-          Alert.alert("권한 필요", "카메라 사용 권한을 허용해주세요.");
+          showAlert("권한 필요", "카메라 사용 권한을 허용해주세요.");
           return;
         }
       } else {
         const { status } =
           await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== "granted") {
-          Alert.alert("권한 필요", "사진첩 접근 권한을 허용해주세요.");
+          showAlert("권한 필요", "사진첩 접근 권한을 허용해주세요.");
           return;
         }
       }
@@ -1706,7 +1707,7 @@ export default function CarEvaluationSheet() {
       }
     } catch (e) {
       console.log("사진 작업 중 오류:", e);
-      Alert.alert("오류", "사진을 불러오는 중 문제가 발생했습니다.");
+      showAlert("오류", "사진을 불러오는 중 문제가 발생했습니다.");
     }
   };
 
@@ -1737,10 +1738,10 @@ export default function CarEvaluationSheet() {
           [categoryId]: p[categoryId].filter((_, i) => i !== index),
         }));
       } else {
-        Alert.alert("오류", "서버에서 삭제를 거부했습니다.");
+        showAlert("오류", "서버에서 삭제를 거부했습니다.");
       }
     } catch (e) {
-      Alert.alert("오류", "네트워크 연결을 확인해주세요.");
+      showAlert("오류", "네트워크 연결을 확인해주세요.");
     }
   };
 
@@ -1760,7 +1761,7 @@ export default function CarEvaluationSheet() {
   // 대표사진으로 지정하면 그 사진이 경매 카드 대표 이미지가 된다.
   const handleSetAsCover = (catId: string, idx: number) => {
     if (idx === 0) return;
-    Alert.alert(
+    showAlert(
       "대표 사진으로 설정",
       "이 사진을 해당 카테고리의 첫 번째 사진으로 옮깁니다. 경매 목록 대표 이미지는 외관 첫 번째 사진이 쓰입니다.",
       [
@@ -1788,7 +1789,7 @@ export default function CarEvaluationSheet() {
       0,
     );
     if (total === 0) return;
-    Alert.alert(
+    showAlert(
       "기본 사진 초기화",
       `기본 사진 ${total}장을 전부 삭제합니다. 되돌릴 수 없습니다.`,
       [
@@ -2207,26 +2208,60 @@ export default function CarEvaluationSheet() {
           </View>
         </Modal>
 
-        {/* ── 업로드 대기/실패 안내 (시스템 Alert 대신 앱 다크테마에 맞춘 커스텀 모달) ── */}
+        {/* ── 알림 (시스템 Alert.alert 대신 앱 다크테마에 맞춘 커스텀 모달) ── */}
         <Modal
-          visible={!!uploadAlert}
+          visible={!!customAlert}
           transparent
           animationType="fade"
-          onRequestClose={() => setUploadAlert(null)}
+          onRequestClose={() => setCustomAlert(null)}
         >
           <View style={styles.alertOverlay}>
             <View style={styles.alertBox}>
               <Ionicons
-                name={uploadAlert?.danger ? "warning" : "cloud-upload"}
+                name={
+                  customAlert?.buttons.some((b) => b.style === "destructive") ||
+                  /실패|오류|권한/.test(customAlert?.title ?? "")
+                    ? "warning"
+                    : "information-circle"
+                }
                 size={28}
-                color={uploadAlert?.danger ? "#ff4d4d" : "#63489a"}
+                color={
+                  customAlert?.buttons.some((b) => b.style === "destructive") ||
+                  /실패|오류|권한/.test(customAlert?.title ?? "")
+                    ? "#ff4d4d"
+                    : "#63489a"
+                }
                 style={{ alignSelf: "center", marginBottom: 8 }}
               />
-              <Text style={styles.alertTitle}>{uploadAlert?.title}</Text>
-              <Text style={styles.alertMessage}>{uploadAlert?.message}</Text>
-              <TouchableOpacity style={styles.alertBtn} onPress={() => setUploadAlert(null)}>
-                <Text style={styles.alertBtnText}>확인</Text>
-              </TouchableOpacity>
+              <Text style={styles.alertTitle}>{customAlert?.title}</Text>
+              <Text style={styles.alertMessage}>{customAlert?.message}</Text>
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                {customAlert?.buttons.map((btn, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[
+                      styles.alertBtn,
+                      { flex: 1 },
+                      btn.style === "cancel" && styles.alertBtnCancel,
+                      btn.style === "destructive" && styles.alertBtnDestructive,
+                    ]}
+                    onPress={() => {
+                      setCustomAlert(null);
+                      btn.onPress?.();
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.alertBtnText,
+                        btn.style === "cancel" && styles.alertBtnCancelText,
+                        btn.style === "destructive" && styles.alertBtnDestructiveText,
+                      ]}
+                    >
+                      {btn.text}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </View>
         </Modal>
@@ -3139,7 +3174,7 @@ export default function CarEvaluationSheet() {
                     {!isViewMode && (
                       <TouchableOpacity
                         style={styles.removeBadgeGrid}
-                        onPress={() => Alert.alert("영상 삭제", "등록된 영상을 삭제할까요?", [
+                        onPress={() => showAlert("영상 삭제", "등록된 영상을 삭제할까요?", [
                           { text: "삭제", style: "destructive", onPress: handleDeleteIssueVideo },
                           { text: "취소", style: "cancel" },
                         ])}
@@ -3632,6 +3667,10 @@ const styles = StyleSheet.create({
   alertMessage: { color: "#ccc", fontSize: 14, lineHeight: 20, textAlign: "center", marginBottom: 18 },
   alertBtn: { backgroundColor: "#fff", borderRadius: 10, paddingVertical: 13, alignItems: "center" },
   alertBtnText: { color: "#000", fontWeight: "700", fontSize: 15 },
+  alertBtnCancel: { backgroundColor: "#333" },
+  alertBtnCancelText: { color: "#ccc" },
+  alertBtnDestructive: { backgroundColor: "#ff4d4d" },
+  alertBtnDestructiveText: { color: "#fff" },
   symbolBtn: {
     flex: 1,
     margin: 4,
