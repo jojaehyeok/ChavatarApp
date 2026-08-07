@@ -74,6 +74,12 @@ const _G = {
     | ((from: string, to: string, label: string) => void)
     | undefined,
   onFailed: null as unknown as ((task: _UploadTask) => void) | undefined,
+  // 뒤로가기로 화면이 언마운트된 "사이"에 끝난 업로드는 onResult/onFailed 콜백이 없어서
+  // 결과가 조용히 버려졌었다(화면이 영원히 "업로드중"으로 멈춰 보이거나, 다시 들어왔을 때
+  // 사진 수가 줄어 보이는 원인). 콜백과 별개로 여기 완료/실패 이력을 남겨두고, 화면이
+  // 다시 마운트될 때 이걸로 상태를 맞춘다(reconcileWithBackgroundQueue 참고).
+  completed: new Map<string, { s3url: string; cat: string; requestId: string }>(),
+  failed: new Map<string, { categoryId: string; requestId: string }>(),
 };
 
 const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -111,6 +117,7 @@ const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
     // 현장 업로드 속도가 우선이라 사진마다 AI 분석을 태우지 않는다(대역폭 경쟁 방지).
     const finalCat = task.categoryId;
 
+    _G.completed.set(task.uri, { s3url, cat: finalCat, requestId: task.requestId });
     _G.onResult?.(task.uri, s3url, finalCat);
     if (_G.submittedId === task.requestId) {
       fetch(`${API_BASE_URL}/external/inspection/${task.requestId}/photo`, {
@@ -124,6 +131,7 @@ const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
       await _sleep(1500 * attempt);
       return _runTask(task, attempt + 1);
     }
+    _G.failed.set(task.uri, { categoryId: task.categoryId, requestId: task.requestId });
     _G.onFailed?.(task);
   }
 };
@@ -489,6 +497,9 @@ export default function CarEvaluationSheet() {
   // idx별로 따로 관리(항목마다 길이가 다를 수 있음)
   const [checklistFieldHeights, setChecklistFieldHeights] = useState<Record<number, number>>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // debounce 타이머
+  // 뒤로가기를 연타하면 saveData()가 겹쳐 실행돼서, 나중에 시작된(사진이 더 많이 찍힌) 저장의
+  // AsyncStorage 쓰기가 먼저 끝난 저장에 의해 덮어써지는 경우가 있었다 — 한 번 누르면 잠긴다.
+  const backNavigatingRef = useRef(false);
 
   // ── 사이드 미러 마커 ──────────────────────────────────────────────────────
   const [mirrorMarkers, setMirrorMarkers] = useState<MirrorMarkers>({
@@ -1068,6 +1079,67 @@ export default function CarEvaluationSheet() {
       setDataLoaded(true);
     }
   };
+
+  // 뒤로가기로 화면이 사라진 "사이"에 배경에서 끝난 업로드는 onResult/onFailed 콜백을 받을
+  // 대상이 없어서 결과가 버려진다(_G.completed/_G.failed는 남아있음) — 화면이 다시 마운트되고
+  // AsyncStorage draft를 복원한 직후, 이 이력으로 로컬 URI를 S3 URL로 바꿔치기하고 실패건도
+  // 다시 표시해서 "영원히 업로드중"이나 "몇 장이 사라짐"처럼 보이는 문제를 없앤다.
+  const reconcileWithBackgroundQueue = () => {
+    const rid = String(requestId || "");
+    if (_G.completed.size === 0 && _G.failed.size === 0) return;
+
+    setImages((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        next[key] = next[key].map((uri) => {
+          const done = _G.completed.get(uri);
+          if (done && done.requestId === rid) {
+            changed = true;
+            return done.s3url;
+          }
+          return uri;
+        });
+      }
+      return changed ? next : prev;
+    });
+    setExtraPhotos((prev) =>
+      prev.map((uri) => {
+        const done = _G.completed.get(uri);
+        return done && done.requestId === rid ? done.s3url : uri;
+      }),
+    );
+    setDashboardImage((prev) => {
+      const done = prev ? _G.completed.get(prev) : undefined;
+      return done && done.requestId === rid ? done.s3url : prev;
+    });
+    setRegImage((prev) => {
+      const done = prev ? _G.completed.get(prev) : undefined;
+      return done && done.requestId === rid ? done.s3url : prev;
+    });
+    setVinImage((prev) => {
+      const done = prev ? _G.completed.get(prev) : undefined;
+      return done && done.requestId === rid ? done.s3url : prev;
+    });
+
+    const newlyFailed: { uri: string; categoryId: string }[] = [];
+    _G.failed.forEach((info, uri) => {
+      if (info.requestId === rid) newlyFailed.push({ uri, categoryId: info.categoryId });
+    });
+    if (newlyFailed.length > 0) {
+      setFailedUploads((prev) => {
+        const existing = new Set(prev.map((f) => f.uri));
+        const toAdd = newlyFailed.filter((f) => !existing.has(f.uri));
+        return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      });
+    }
+  };
+
+  // draft 복원(loadSavedData/loadEditData)이 끝난 뒤에 실행해야 방금 복원한 상태 위에
+  // 정확히 덮어쓸 수 있다.
+  useEffect(() => {
+    if (dataLoaded) reconcileWithBackgroundQueue();
+  }, [dataLoaded]);
 
   // 2. 사진 선택 함수
   const pickExtraImage = async () => {
@@ -1977,6 +2049,10 @@ export default function CarEvaluationSheet() {
         <View style={styles.navHeader}>
           <TouchableOpacity
             onPress={async () => {
+              // 연타 방지 — 겹쳐 실행된 saveData()끼리 AsyncStorage 쓰기 순서가 꼬여서
+              // 방금 찍은 사진이 적게 저장된 스냅샷에 덮어써지는 걸 막는다.
+              if (backNavigatingRef.current) return;
+              backNavigatingRef.current = true;
               if (isPractice) {
                 // 연습 모드는 저장할 게 없으니 묻지 않고, 지금까지의 임시저장도 지운다
                 AsyncStorage.removeItem(STORAGE_KEY);
