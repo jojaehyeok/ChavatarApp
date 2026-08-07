@@ -315,7 +315,7 @@ export default function DiagnosisManagement() {
     Animated.timing(drawerAnim, { toValue: DRAWER_W, duration: 220, useNativeDriver: true }).start(() => setMenuVisible(false));
   }, [drawerAnim]);
 
-  const [data, setData] = useState<DiagnosisItem[]>([]);
+  const [allData, setAllData] = useState<DiagnosisItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ratingMap, setRatingMap] = useState<Record<string, number>>({});
@@ -466,27 +466,6 @@ export default function DiagnosisManagement() {
     return () => { try { sub?.remove(); } catch (_e) {} };
   }, [currentDriverId]);
 
-  const upcomingDates = useMemo(() => {
-    if (activeTab !== 'upcoming') return [];
-    const dates = data
-      .map(item => (item.preferredDateTime || '').substring(0, 10))
-      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
-    return [...new Set(dates)].sort();
-  }, [data, activeTab]);
-
-  const filteredData = useMemo(() => {
-    let result = data;
-    if (activeTab === 'upcoming' && filterDate !== 'all') {
-      result = result.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
-    }
-    // 차량번호로 검색 — "123두1588"처럼 앞부분을 몰라도 "1588"만 쳐도 찾을 수 있게 부분일치
-    const query = searchQuery.trim().toLowerCase();
-    if (query) {
-      result = result.filter(item => (item.carNumber || '').toLowerCase().includes(query));
-    }
-    return result;
-  }, [data, activeTab, filterDate, searchQuery]);
-
   // 자동배정 알림톡을 놓칠 수 있어서 추가한 "확인 여부" 표시(대시보드 "배정 진단사" 컬럼) —
   // 진단사가 실제로 이 건에 반응했다고 볼 수 있는 행동(연락하기/시간 변경) 시점에 기록한다.
   const markDriverSeen = useCallback((item: DiagnosisItem | null) => {
@@ -530,48 +509,77 @@ export default function DiagnosisManagement() {
     try { await Linking.openURL(url); } catch { Alert.alert('앱 미설치', '해당 지도 앱이 설치되어 있지 않습니다.'); }
   };
 
+  // 탭별 필터링을 여기서 하지 않고 원본을 그대로 저장한다 — activeTab을 이 함수의
+  // 의존성에 넣으면(예전 방식) 탭을 바꿀 때마다 fetchData의 참조가 바뀌어서 아래
+  // useFocusEffect가 다시 실행되고, 그 네트워크 왕복이 끝나기 전까지 화면엔 방금 전
+  // 탭(또는 그 이전에 마지막으로 받아온) 데이터가 잠깐 그대로 남아있었다 — 이게 탭
+  // 전환 시 화면이 깜빡이거나, 이미 처리한 예약요청 건이 잠깐 다시 보이던 원인이었다.
+  // 이제 탭 전환은 fetch 없이 아래 tabFilteredData에서 즉시(로컬) 계산된다.
   const fetchData = useCallback(async () => {
     if (!currentDriverId) return;
     setLoading(true);
     try {
       const response = await axios.get(`${API_BASE_URL}/external/request/list`);
-      const allData: DiagnosisItem[] = Array.isArray(response.data) ? response.data : response.data.data;
-      if (!allData) return;
-      const filtered = allData.filter(item => {
-        // 자체 신청(source가 "self-"로 시작) 건은 발주사가 직접 처리하는 건이라
-        // 진단사가 방문할 필요가 없음 — 앱 어느 탭에도 노출하지 않음
-        if (item.source?.startsWith('self-')) return false;
-        const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
-        // 에이전트가 다른 진단사에게 지정 배정한 건은, 배정한 본인도 완료된 예약 탭에서 리포트를 확인/수정할 수 있어야 함
-        const isAgentAssignedByMe = String(item.assignedByAgentId) === String(currentDriverId);
-        // 진단/에이전트 등급은 다른 평가사가 올린 라운딩 요청을 예약 요청 탭에서 함께 확인 가능
-        const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
-        // 계좌이체 입금 미확인 건(depositConfirmed === false)은 관리자가 확인하기 전까지
-        // "예약 요청" 탭에서 숨김 — 아직 진단사가 볼 필요 없는 건임
-        if (activeTab === 'request') return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRounding);
-        if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
-        return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
-      });
-      // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
-      // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
-      // 완료된 예약은 반대로 최근에 방문한 건이 위로 오도록 내림차순 정렬
-      const normalizeDt = (dt: string) => (dt || '').replace('T', ' ');
-      filtered.sort((a, b) => {
-        const diff = normalizeDt(a.preferredDateTime).localeCompare(normalizeDt(b.preferredDateTime));
-        return activeTab === 'completed' ? -diff : diff;
-      });
-      setData(filtered);
+      const fetched: DiagnosisItem[] = Array.isArray(response.data) ? response.data : response.data.data;
+      if (!fetched) return;
+      // 자체 신청(source가 "self-"로 시작) 건은 발주사가 직접 처리하는 건이라
+      // 진단사가 방문할 필요가 없음 — 앱 어느 탭에도 노출하지 않음
+      setAllData(fetched.filter(item => !item.source?.startsWith('self-')));
 
       // "예약 요청" 탭 뱃지용 카운트 — 지금 보고 있는 탭이 뭐든 상관없이 항상 최신으로 유지
       const canSeeRoundingForBadge = driverTier === 'certified' || driverTier === 'agent';
-      const requestTabCount = allData.filter(item => {
+      const requestTabCount = fetched.filter(item => {
         if (item.source?.startsWith('self-')) return false;
         return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRoundingForBadge);
       }).length;
       setRequestCount(requestTabCount);
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [activeTab, currentDriverId, currentDriverName, driverTier]);
+  }, [currentDriverId, driverTier]);
+
+  // activeTab에 맞는 상태 필터 + 정렬 — 서버 재조회 없이 즉시 계산되므로 탭 전환이 순간적이다.
+  const tabFilteredData = useMemo(() => {
+    const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
+    const result = allData.filter(item => {
+      const isMy = String(item.assignedDriverId) === String(currentDriverId) || item.assignedDriverName === currentDriverName;
+      // 에이전트가 다른 진단사에게 지정 배정한 건은, 배정한 본인도 완료된 예약 탭에서 리포트를 확인/수정할 수 있어야 함
+      const isAgentAssignedByMe = String(item.assignedByAgentId) === String(currentDriverId);
+      // 계좌이체 입금 미확인 건(depositConfirmed === false)은 관리자가 확인하기 전까지
+      // "예약 요청" 탭에서 숨김 — 아직 진단사가 볼 필요 없는 건임
+      if (activeTab === 'request') return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRounding);
+      if (activeTab === 'upcoming') return (item.status === 'CONFIRMED' || item.status === 'ASSIGNED') && isMy;
+      return item.status === 'COMPLETED' && (isMy || isAgentAssignedByMe);
+    });
+    // 방문 예정시간이 이른 순으로 정렬 (기존엔 서버 응답 순서 그대로라 최신 접수순으로 보였음)
+    // preferredDateTime 구분자가 소스마다 다를 수 있어("YYYY-MM-DD HH:mm" vs "YYYY-MM-DDTHH:mm") 비교 전에 통일
+    // 완료된 예약은 반대로 최근에 방문한 건이 위로 오도록 내림차순 정렬
+    const normalizeDt = (dt: string) => (dt || '').replace('T', ' ');
+    return [...result].sort((a, b) => {
+      const diff = normalizeDt(a.preferredDateTime).localeCompare(normalizeDt(b.preferredDateTime));
+      return activeTab === 'completed' ? -diff : diff;
+    });
+  }, [allData, activeTab, currentDriverId, currentDriverName, driverTier]);
+
+  const upcomingDates = useMemo(() => {
+    if (activeTab !== 'upcoming') return [];
+    const dates = tabFilteredData
+      .map(item => (item.preferredDateTime || '').substring(0, 10))
+      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    return [...new Set(dates)].sort();
+  }, [tabFilteredData, activeTab]);
+
+  const filteredData = useMemo(() => {
+    let result = tabFilteredData;
+    if (activeTab === 'upcoming' && filterDate !== 'all') {
+      result = result.filter(item => (item.preferredDateTime || '').startsWith(filterDate));
+    }
+    // 차량번호로 검색 — "123두1588"처럼 앞부분을 몰라도 "1588"만 쳐도 찾을 수 있게 부분일치
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      result = result.filter(item => (item.carNumber || '').toLowerCase().includes(query));
+    }
+    return result;
+  }, [tabFilteredData, activeTab, filterDate, searchQuery]);
 
   const openTimeChange = (item: DiagnosisItem) => {
     setTimeChangeItem(item);
