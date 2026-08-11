@@ -40,6 +40,9 @@ try {
   Notifications = require('expo-notifications') as typeof import('expo-notifications');
 } catch (_) {}
 
+const NOTIFICATION_CHANNEL_ID = 'cavior-alerts';
+const NOTIFICATION_SOUND = 'carvior_premium_beer_ad_notification';
+
 if (!IS_EXPO_GO) {
   Notifications?.setNotificationHandler({
     handleNotification: async () => ({
@@ -49,6 +52,14 @@ if (!IS_EXPO_GO) {
       shouldSetBadge: true,
     }),
   });
+
+  if (Platform.OS === 'android') {
+    Notifications?.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
+      name: '카비어 알림',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: NOTIFICATION_SOUND,
+    });
+  }
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -940,7 +951,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.16</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.19</Text>
               </View>
             </Animated.View>
           </Pressable>

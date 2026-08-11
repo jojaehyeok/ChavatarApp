@@ -3602,11 +3602,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
     borderBottomColor: "#1a1a1a",
   },
-  toggleLabel: { color: "#fff", fontSize: 16 },
+  // 노안 때문에 글씨가 작아서 안 보인다는 평가사님들 피드백으로 확인사항(경고등/옵션/누유,
+  // 기타의견도 같은 스타일 공유) 라벨·입력 텍스트 크기를 키움
+  toggleLabel: { color: "#fff", fontSize: 21 },
   expandArea: { paddingHorizontal: 20, paddingBottom: 15 },
   tArea: {
     backgroundColor: "#111",
     color: "#fff",
+    fontSize: 19,
     borderRadius: 8,
     padding: 12,
     height: 70,
