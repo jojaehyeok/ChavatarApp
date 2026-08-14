@@ -855,7 +855,7 @@ export default function DiagnosisManagement() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '' } })}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '' } })}
           >
             <Text style={{ color: isDark ? '#000' : '#fff', fontWeight: 'bold' }}>진단 시작</Text>
           </TouchableOpacity>
@@ -881,14 +881,14 @@ export default function DiagnosisManagement() {
         <View style={styles.btnGroup}>
           <TouchableOpacity
             style={[styles.subBtn, { flex: canEdit ? 1 : undefined, width: canEdit ? undefined : '100%', backgroundColor: theme.buttonSub }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view', isExportBooking: item.isExportBooking ? '1' : '' } })}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '' } })}
           >
             <Text style={[styles.subBtnText, { color: theme.textSub }]}>진단 내역 보기</Text>
           </TouchableOpacity>
           {canEdit && (
             <TouchableOpacity
               style={[styles.subBtn, { flex: 1, backgroundColor: theme.accent }]}
-              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit', isExportBooking: item.isExportBooking ? '1' : '' } })}
+              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '' } })}
             >
               <Text style={[styles.subBtnText, { color: '#fff' }]}>수정하기</Text>
             </TouchableOpacity>
@@ -967,7 +967,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.20</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.21</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1403,20 +1403,9 @@ export default function DiagnosisManagement() {
               {!!requestInfoItem?.listingUrl && (
                 <>
                   <Text style={[styles.label, { marginTop: 4 }]}>매물 링크</Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, marginBottom: 12 }}>
-                    <TouchableOpacity
-                      onPress={() => Linking.openURL(requestInfoItem.listingUrl!)}
-                      style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.accent, alignItems: 'center' }}
-                    >
-                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>매물보기</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      disabled
-                      style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: isDark ? '#2a2a2a' : '#eee', alignItems: 'center' }}
-                    >
-                      <Text style={{ color: theme.textSub, fontWeight: '700', fontSize: 13 }}>자동차 상세정보 (준비중)</Text>
-                    </TouchableOpacity>
-                  </View>
+                  <Text style={{ fontSize: 14, color: theme.textMain, marginTop: 2, marginBottom: 12 }}>
+                    {requestInfoItem.listingUrl}
+                  </Text>
                 </>
               )}
 

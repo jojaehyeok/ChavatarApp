@@ -24,6 +24,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -387,7 +388,7 @@ function IssueVideoRecorderModal({
 
 // ─── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function CarEvaluationSheet() {
-  const { requestId, carNumber: carNumberParam, carModel: carModelParam, serviceType, mode, adminRequest } =
+  const { requestId, carNumber: carNumberParam, carModel: carModelParam, serviceType, mode, adminRequest, listingUrl } =
     useLocalSearchParams();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -2478,10 +2479,21 @@ export default function CarEvaluationSheet() {
                   {carModel || "차량모델"}{carOwner ? ` · 차주 ${carOwner}` : ""}
                 </Text>
               </View>
-              {!isViewMode && (
-                <TouchableOpacity onPress={openCarEdit} style={{ padding: 8 }}>
-                  <Ionicons name="pencil" size={18} color="#888" />
-                </TouchableOpacity>
+              {!!listingUrl && (
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <TouchableOpacity
+                    onPress={() => Linking.openURL(String(listingUrl))}
+                    style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#333" }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>매물보기</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled
+                    style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#222" }}
+                  >
+                    <Text style={{ color: "#666", fontSize: 12, fontWeight: "700" }}>상세정보</Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
 
