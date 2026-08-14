@@ -1389,9 +1389,20 @@ export default function DiagnosisManagement() {
               {!!requestInfoItem?.listingUrl && (
                 <>
                   <Text style={[styles.label, { marginTop: 4 }]}>매물 링크</Text>
-                  <Text style={{ fontSize: 14, color: theme.textMain, marginTop: 2, marginBottom: 12 }}>
-                    {requestInfoItem.listingUrl}
-                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 6, marginBottom: 12 }}>
+                    <TouchableOpacity
+                      onPress={() => Linking.openURL(requestInfoItem.listingUrl!)}
+                      style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.accent, alignItems: 'center' }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>매물보기</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      disabled
+                      style={{ flex: 1, paddingVertical: 10, borderRadius: 8, backgroundColor: isDark ? '#2a2a2a' : '#eee', alignItems: 'center' }}
+                    >
+                      <Text style={{ color: theme.textSub, fontWeight: '700', fontSize: 13 }}>자동차 상세정보 (준비중)</Text>
+                    </TouchableOpacity>
+                  </View>
                 </>
               )}
 

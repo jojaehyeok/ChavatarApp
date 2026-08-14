@@ -26,6 +26,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -2493,8 +2494,11 @@ export default function CarEvaluationSheet() {
                   behavior={Platform.OS === "ios" ? "padding" : "height"}
                   style={{ flex: 1 }}
                 >
-                <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }}>
-                  <View style={{ backgroundColor: "#181818", borderRadius: 16, padding: 20 }}>
+                <Pressable
+                  style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }}
+                  onPress={() => setCarEditVisible(false)}
+                >
+                  <Pressable onPress={() => {}} style={{ backgroundColor: "#181818", borderRadius: 16, padding: 20 }}>
                     <Text style={{ color: "#fff", fontSize: 16, fontWeight: "bold", marginBottom: 16 }}>
                       차량정보 수정
                     </Text>
@@ -2537,8 +2541,8 @@ export default function CarEvaluationSheet() {
                         {savingCarInfo ? <ActivityIndicator size="small" /> : <Text style={{ color: "#000", fontWeight: "700" }}>저장</Text>}
                       </TouchableOpacity>
                     </View>
-                  </View>
-                </View>
+                  </Pressable>
+                </Pressable>
                 </KeyboardAvoidingView>
               </Modal>
             )}
