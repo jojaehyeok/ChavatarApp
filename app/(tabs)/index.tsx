@@ -13,6 +13,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -32,6 +33,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { API_BASE_URL } from '../../constants/api';
+import { brandLogoUrl } from '../../utils/carBrand';
 
 const IS_EXPO_GO = Constants.appOwnership === 'expo';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -1031,7 +1033,12 @@ export default function DiagnosisManagement() {
                 </View>
               )}
               <View style={styles.cardHeader}>
-                <Text style={[styles.cardTitle, { color: theme.textMain }]}>{item.carModel || '차량 정보 없음'}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+                  {brandLogoUrl(item.carModel) && (
+                    <Image source={{ uri: brandLogoUrl(item.carModel)! }} style={{ width: 28, height: 20 }} resizeMode="contain" />
+                  )}
+                  <Text style={[styles.cardTitle, { color: theme.textMain }]}>{item.carModel || '차량 정보 없음'}</Text>
+                </View>
                 {activeTab === 'upcoming'
                   ? <TouchableOpacity onPress={() => setMoreOptionsItem(item)} style={{ padding: 4 }}>
                       <Ionicons name="ellipsis-vertical" size={20} color={theme.textSub} />
