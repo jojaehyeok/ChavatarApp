@@ -2473,28 +2473,28 @@ export default function CarEvaluationSheet() {
           <ScrollView style={styles.container} bounces={false}>
             {/* 차량 정보 바 */}
             <View style={[styles.carSummaryBar, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
-              <View>
+              <TouchableOpacity disabled={isViewMode} onPress={openCarEdit} activeOpacity={isViewMode ? 1 : 0.6}>
                 <Text style={styles.carNumText}>{carNumber || "차량번호"}</Text>
                 <Text style={styles.carModelText}>
                   {carModel || "차량모델"}{carOwner ? ` · 차주 ${carOwner}` : ""}
                 </Text>
-              </View>
-              {!!listingUrl && (
-                <View style={{ flexDirection: "row", gap: 6 }}>
+              </TouchableOpacity>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                {!!listingUrl && (
                   <TouchableOpacity
                     onPress={() => Linking.openURL(String(listingUrl))}
                     style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#333" }}
                   >
                     <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>매물보기</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    disabled
-                    style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#222" }}
-                  >
-                    <Text style={{ color: "#666", fontSize: 12, fontWeight: "700" }}>상세정보</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+                )}
+                <TouchableOpacity
+                  disabled
+                  style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#222" }}
+                >
+                  <Text style={{ color: "#666", fontSize: 12, fontWeight: "700" }}>상세정보</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             {carEditVisible && (
