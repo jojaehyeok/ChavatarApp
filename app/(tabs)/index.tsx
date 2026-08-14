@@ -44,6 +44,10 @@ try {
 
 const NOTIFICATION_CHANNEL_ID = 'cavior-alerts';
 const NOTIFICATION_SOUND = 'carvior_premium_beer_ad_notification';
+// 자동배정 확정("배정되었습니다")과 미배정 신규 요청 브로드캐스트("도착했습니다")는
+// 서로 다른 상황이라 알림음도 구분되게 별도 채널로 분리 — 백엔드 sendPush의 channelId와 매칭됨.
+const NOTIFICATION_CHANNEL_AUTO_ASSIGNED = 'cavior-auto-assigned';
+const NOTIFICATION_CHANNEL_NEW_REQUEST = 'cavior-new-request';
 
 if (!IS_EXPO_GO) {
   Notifications?.setNotificationHandler({
@@ -60,6 +64,16 @@ if (!IS_EXPO_GO) {
       name: '카비어 알림',
       importance: Notifications.AndroidImportance.HIGH,
       sound: NOTIFICATION_SOUND,
+    });
+    Notifications?.setNotificationChannelAsync(NOTIFICATION_CHANNEL_AUTO_ASSIGNED, {
+      name: '카비어 자동배정',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'carvior_auto_assigned',
+    });
+    Notifications?.setNotificationChannelAsync(NOTIFICATION_CHANNEL_NEW_REQUEST, {
+      name: '카비어 신규 요청',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'carvior_new_request',
     });
   }
 }
