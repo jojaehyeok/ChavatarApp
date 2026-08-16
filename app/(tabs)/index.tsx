@@ -965,6 +965,16 @@ export default function DiagnosisManagement() {
                   <Text style={[styles.drawerItemText, { color: theme.textMain }]}>진단 테스트 해보기</Text>
                   <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.drawerItem, { borderBottomColor: theme.border }]}
+                  onPress={() => { closeDrawer(); setTimeout(() => router.push('/account-delete' as any), 250); }}
+                >
+                  <View style={[styles.drawerItemIcon, { backgroundColor: isDark ? '#2e1a1a' : '#fef2f2' }]}>
+                    <Ionicons name="person-remove-outline" size={20} color="#e53e3e" />
+                  </View>
+                  <Text style={[styles.drawerItemText, { color: theme.textMain }]}>회원 탈퇴</Text>
+                  <Ionicons name="chevron-forward" size={16} color={theme.textSub} />
+                </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
                 <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.22</Text>
