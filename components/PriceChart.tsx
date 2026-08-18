@@ -1,6 +1,6 @@
 import React from "react";
 import { Dimensions, Text, View } from "react-native";
-import Svg, { Circle, Line, Path, Rect, Text as SvgText } from "react-native-svg";
+import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
 
 type Listing = { mileage: number; priceManwon: number };
 
@@ -60,7 +60,9 @@ export default function PriceChart({
   const PAD_L = 58, PAD_B = 28, PAD_T = 14, PAD_R = 14;
 
   const xs = points.map((p) => p.x);
-  const maxX = Math.max(...xs, (targetMileage ?? 0) / 10000) * 1.08 || 1;
+  const rawMaxX = Math.max(...xs, (targetMileage ?? 0) / 10000) * 1.08 || 1;
+  const xAxis = niceAxis(rawMaxX, 5);
+  const maxX = xAxis.max;
   const minX = 0;
   const ys = points.map((p) => p.y);
   const yAxis = niceAxis(Math.max(...ys) * 1.08, 4);
@@ -91,8 +93,12 @@ export default function PriceChart({
 
   const yGrid = Array.from({ length: Math.round(maxY / yAxis.step) + 1 }, (_, i) => yAxis.step * i);
   const targetX = targetMileage != null ? targetMileage / 10000 : null;
-  // 내 차 라벨은 x축 눈금(0/최대)과 같은 줄에 두면 서로 겹치니, 점 위에 알약 배지로 따로 띄운다.
-  const targetLabelY = targetY != null ? Math.max(PAD_T + 12, sy(targetY) - 16) : 0;
+  // x축은 0/5만/10만... 처럼 일정 간격 눈금으로 쭉 나열하고, 내 차 위치와 겹치는 눈금만 그
+  // 칸을 "내차 N만km"로 대체한다 — 내 차 라벨이 별도로 떠서 다른 눈금과 겹치는 일이 없게.
+  const xTicks = Array.from({ length: Math.round(maxX / xAxis.step) + 1 }, (_, i) => xAxis.step * i);
+  const nearTargetTick =
+    targetX != null ? xTicks.reduce((best, t) => (Math.abs(t - targetX) < Math.abs(best - targetX) ? t : best), xTicks[0]) : null;
+  const targetMergedWithTick = targetX != null && nearTargetTick != null && Math.abs(nearTargetTick - targetX) < xAxis.step * 0.3;
 
   return (
     <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
@@ -133,12 +139,15 @@ export default function PriceChart({
 
         <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} strokeLinecap="round" />
 
-        <SvgText x={sx(minX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="start">
-          {Math.round(minX)}만km
-        </SvgText>
-        <SvgText x={sx(maxX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="end">
-          {Math.round(maxX)}만km
-        </SvgText>
+        {xTicks.map((t, i) => {
+          if (targetMergedWithTick && t === nearTargetTick) return null;
+          const anchor = i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle";
+          return (
+            <SvgText key={i} x={sx(t)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor={anchor}>
+              {Math.round(t)}만km
+            </SvgText>
+          );
+        })}
 
         {targetX != null && targetY != null && (
           <>
@@ -152,16 +161,8 @@ export default function PriceChart({
               strokeDasharray="3,3"
             />
             <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
-            <Rect
-              x={sx(targetX) - 28}
-              y={targetLabelY - 12}
-              width={56}
-              height={20}
-              rx={10}
-              fill="#5b8dff"
-            />
-            <SvgText x={sx(targetX)} y={targetLabelY + 3} fontSize={10} fontWeight="700" fill="#fff" textAnchor="middle">
-              {Math.round(targetX)}만km
+            <SvgText x={sx(targetX)} y={H - PAD_B + 18} fontSize={10} fontWeight="700" fill="#5b8dff" textAnchor="middle">
+              내차 {Math.round(targetX)}만km
             </SvgText>
           </>
         )}
