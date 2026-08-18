@@ -26,6 +26,8 @@ export function computePriceEstimate(
   listings: Listing[],
   targetMileage: number | undefined,
   depreciationPct: number | undefined,
+  // 외판도색/휠/스마트키/타이어/실내크리닝 등 정액 실비 차감(만원) — 있으면 %감가 이후 추가로 뺀다.
+  flatDeductionWon: number = 0,
 ): {
   rangeLow: number; rangeHigh: number;
   depLow: number | null; depHigh: number | null;
@@ -48,10 +50,10 @@ export function computePriceEstimate(
   const rangeLow = Math.round((targetY - margin) / 10) * 10;
   const rangeHigh = Math.round((targetY + margin) / 10) * 10;
 
-  const hasDep = !!depreciationPct && depreciationPct > 0;
-  const depFactor = hasDep ? 1 - depreciationPct! / 100 : 1;
-  const depLow = hasDep ? Math.round((rangeLow * depFactor) / 10) * 10 : null;
-  const depHigh = hasDep ? Math.round((rangeHigh * depFactor) / 10) * 10 : null;
+  const hasDep = (!!depreciationPct && depreciationPct > 0) || flatDeductionWon > 0;
+  const depFactor = depreciationPct && depreciationPct > 0 ? 1 - depreciationPct / 100 : 1;
+  const depLow = hasDep ? Math.round((rangeLow * depFactor - flatDeductionWon) / 10) * 10 : null;
+  const depHigh = hasDep ? Math.round((rangeHigh * depFactor - flatDeductionWon) / 10) * 10 : null;
 
   return { rangeLow, rangeHigh, depLow, depHigh };
 }

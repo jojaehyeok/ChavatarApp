@@ -42,6 +42,7 @@ export default function PriceChart({
   targetMileage,
   subtitle,
   depreciationPct,
+  flatDeductionWon,
   precise = false,
 }: {
   listings: Listing[];
@@ -49,6 +50,8 @@ export default function PriceChart({
   subtitle?: string;
   // 사고감가율(%) — 진단사가 체크한 손상 부위 기준으로 계산된 값. agent 등급 데모 전용.
   depreciationPct?: number;
+  // 외판도색/휠/스마트키/타이어/실내크리닝 등 정액 실비 차감(만원).
+  flatDeductionWon?: number;
   // agent 등급 전용 — false(일반 진단사)면 시세 범위를 100만원 단위로 뭉뚱그려서 개략적으로만 보여준다.
   precise?: boolean;
 }) {
@@ -88,7 +91,7 @@ export default function PriceChart({
   const targetY: number | null =
     targetMileage != null && targetMileage > 0 ? Math.max(0, predict(targetMileage / 10000)) : null;
 
-  const estimate = computePriceEstimate(listings, targetMileage, depreciationPct);
+  const estimate = computePriceEstimate(listings, targetMileage, depreciationPct, flatDeductionWon);
   // 일반 진단사에게는 100만원 단위로 뭉뚱그려서 "개략적인" 범위만 보여준다(양끝을 밖으로 벌려
   // 반올림해서 실제 값이 항상 표시 범위 안에 들어오게).
   const roughen = (v: number, dir: "down" | "up") =>
@@ -150,7 +153,10 @@ export default function PriceChart({
               }}
             >
               <Text style={{ color: "#a78bfa", fontSize: 11, fontWeight: "700", marginBottom: 2 }}>
-                사고감가 반영 (-{depreciationPct}%) · 데모
+                {[
+                  depreciationPct ? `사고감가 -${depreciationPct}%` : null,
+                  flatDeductionWon ? `실비 -${flatDeductionWon}만원` : null,
+                ].filter(Boolean).join(" · ") || "감가 반영"} · 데모
               </Text>
               <Text style={{ color: "#fff", fontSize: 18, fontWeight: "900" }}>
                 {depRangeLow.toLocaleString()} ~ {depRangeHigh.toLocaleString()}

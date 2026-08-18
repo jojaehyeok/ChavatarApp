@@ -46,6 +46,7 @@ import CarEvaluationDamageChecker from "../components/CarEvaluationDamageChecker
 import PhotoAnnotator from "../components/PhotoAnnotator";
 import PriceChart from "../components/PriceChart";
 import { computeDamageDepreciationPct } from "../constants/damageDepreciation";
+import { computeFlatRepairDeduction } from "../constants/repairCostEstimate";
 import { computePriceEstimate } from "../utils/priceEstimate";
 
 // ─── 상수 ─────────────────────────────────────────────────────────────────────
@@ -456,15 +457,30 @@ export default function CarEvaluationSheet() {
     return Array.isArray(data) ? data : [];
   };
 
-  // 예약에 등급 + 그 시점 시세 추정치(+사고감가 반영치, agent 등급만)를 저장 — 관리자 대시보드가
-  // 재계산 없이 그대로 보여주는 용도. 실패해도 이번 화면 사용에는 영향 없어 조용히 무시.
+  // 외판도색/휠/스마트키/타이어/실내크리닝/유리·라이트 실비 차감 총액(만원) — agent 등급 전용.
+  const getFlatDeductionWon = () => {
+    if (!isAgentTier) return 0;
+    return computeFlatRepairDeduction({
+      manufacturer: specSelected?.manufacturer,
+      paintNeeded,
+      wheelScratch,
+      smartKeyCount: smartKey,
+      frontTirePct: frontTire,
+      backTirePct: backTire,
+      interiorCleaning,
+      glassLightDamage,
+    }).totalWon;
+  };
+
+  // 예약에 등급 + 그 시점 시세 추정치(+사고감가/실비 반영치, agent 등급만)를 저장 — 관리자
+  // 대시보드가 재계산 없이 그대로 보여주는 용도. 실패해도 이번 화면 사용에는 영향 없어 조용히 무시.
   const saveCarSpecWithEstimate = (
     m: { manufacturer: string; model: string; badge: string },
     listings: { mileage: number; priceManwon: number }[],
   ) => {
     const targetMileage = parseInt(mileage.replace(/,/g, ""), 10) || undefined;
     const depPct = isAgentTier ? computeDamageDepreciationPct(checkedDamages) : undefined;
-    const estimate = computePriceEstimate(listings, targetMileage, depPct);
+    const estimate = computePriceEstimate(listings, targetMileage, depPct, getFlatDeductionWon());
     fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -618,6 +634,9 @@ export default function CarEvaluationSheet() {
   const [wheelScratch, setWheelScratch] = useState(0);
   const [frontTire, setFrontTire] = useState(50);
   const [backTire, setBackTire] = useState(50);
+  // 매입가 참고용 실비 산정에 쓰는 항목 — 위 외판도색/휠스크래치와 같은 카운터 방식
+  const [interiorCleaning, setInteriorCleaning] = useState(0);
+  const [glassLightDamage, setGlassLightDamage] = useState(0);
 
   // ── 체크박스 항목 ─────────────────────────────────────────────────────────
   const [showWarning, setShowWarning] = useState(false);
@@ -1015,6 +1034,8 @@ export default function CarEvaluationSheet() {
       // 외관 수치
       setPaintNeeded(d.car_status?.paintNeeded ?? 0);
       setWheelScratch(d.car_status?.wheelScratch ?? 0);
+      setInteriorCleaning(d.car_status?.interiorCleaning ?? 0);
+      setGlassLightDamage(d.car_status?.glassLightDamage ?? 0);
       setFrontTire(d.car_status?.tireTread?.front ?? 50);
       setBackTire(d.car_status?.tireTread?.back ?? 50);
 
@@ -1111,6 +1132,8 @@ export default function CarEvaluationSheet() {
     specialKey,
     paintNeeded,
     wheelScratch,
+    interiorCleaning,
+    glassLightDamage,
     frontTire,
     backTire,
     showWarning,
@@ -1146,6 +1169,8 @@ export default function CarEvaluationSheet() {
         specialKey,
         paintNeeded,
         wheelScratch,
+        interiorCleaning,
+        glassLightDamage,
         frontTire,
         backTire,
         showWarning,
@@ -1202,6 +1227,8 @@ export default function CarEvaluationSheet() {
         setSpecialKey(p.specialKey || 0);
         setPaintNeeded(p.paintNeeded || 0);
         setWheelScratch(p.wheelScratch || 0);
+        setInteriorCleaning(p.interiorCleaning || 0);
+        setGlassLightDamage(p.glassLightDamage || 0);
         setFrontTire(p.frontTire ?? 50);
         setBackTire(p.backTire ?? 50);
         setShowWarning(p.showWarning || false);
@@ -1565,6 +1592,8 @@ export default function CarEvaluationSheet() {
         // 외관 수치
         paintNeeded,
         wheelScratch,
+        interiorCleaning,
+        glassLightDamage,
         frontTire,
         backTire,
         // 카테고리 사진
@@ -1616,10 +1645,21 @@ export default function CarEvaluationSheet() {
         try {
           const listings = await fetchSpecListings(specSelected);
           const depPct = computeDamageDepreciationPct(checkedDamages);
+          const flatDeductionWon = computeFlatRepairDeduction({
+            manufacturer: specSelected.manufacturer,
+            paintNeeded,
+            wheelScratch,
+            smartKeyCount: smartKey,
+            frontTirePct: frontTire,
+            backTirePct: backTire,
+            interiorCleaning,
+            glassLightDamage,
+          }).totalWon;
           const estimate = computePriceEstimate(
             listings,
             parseInt(mileage.replace(/,/g, ""), 10) || undefined,
             depPct,
+            flatDeductionWon,
           );
           fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
             method: "PATCH",
@@ -2818,6 +2858,7 @@ export default function CarEvaluationSheet() {
                               targetMileage={parseInt(mileage.replace(/,/g, ""), 10) || undefined}
                               subtitle={specSelected ? `${specSelected.manufacturer} ${specSelected.model} · ${specSelected.badge}` : undefined}
                               depreciationPct={isAgentTier ? computeDamageDepreciationPct(checkedDamages) : undefined}
+                              flatDeductionWon={isAgentTier ? getFlatDeductionWon() : undefined}
                               precise={isAgentTier}
                             />
                             {specListings.map((l) => (
@@ -3052,6 +3093,28 @@ export default function CarEvaluationSheet() {
                   }
                   onInc={() => setWheelScratch(wheelScratch + 1)}
                   onType={setWheelScratch}
+                />
+                <View style={styles.thinDivider} />
+                <Counter
+                  label="실내크리닝/복원 필요"
+                  value={interiorCleaning}
+                  suffix="회"
+                  onDec={() =>
+                    interiorCleaning > 0 && setInteriorCleaning(interiorCleaning - 1)
+                  }
+                  onInc={() => setInteriorCleaning(interiorCleaning + 1)}
+                  onType={setInteriorCleaning}
+                />
+                <View style={styles.thinDivider} />
+                <Counter
+                  label="유리/라이트 손상"
+                  value={glassLightDamage}
+                  suffix="건"
+                  onDec={() =>
+                    glassLightDamage > 0 && setGlassLightDamage(glassLightDamage - 1)
+                  }
+                  onInc={() => setGlassLightDamage(glassLightDamage + 1)}
+                  onType={setGlassLightDamage}
                 />
               </View>
             </View>
