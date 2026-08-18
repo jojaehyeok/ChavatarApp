@@ -389,8 +389,18 @@ function IssueVideoRecorderModal({
 
 // ─── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function CarEvaluationSheet() {
-  const { requestId, carNumber: carNumberParam, carModel: carModelParam, serviceType, mode, adminRequest, listingUrl } =
-    useLocalSearchParams();
+  const {
+    requestId,
+    carNumber: carNumberParam,
+    carModel: carModelParam,
+    serviceType,
+    mode,
+    adminRequest,
+    listingUrl,
+    carSpecManufacturer: carSpecManufacturerParam,
+    carSpecModel: carSpecModelParam,
+    carSpecBadge: carSpecBadgeParam,
+  } = useLocalSearchParams();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -405,19 +415,51 @@ export default function CarEvaluationSheet() {
   const [carEditOwner, setCarEditOwner] = useState("");
   const [carEditModel, setCarEditModel] = useState("");
 
-  // "상세정보"(제원/시세, EnCarAPI 연동) — 차종명으로 검색 → 등급 선택 → 실거래 비교매물
+  // "상세정보"(제원/시세, EnCarAPI 연동) — 차종명으로 검색 → 등급 선택 → 실거래 비교매물.
+  // 한번 등급을 고르면 이 예약(booking)에 고정 저장되어 다음에 다시 열어도 재검색 없이
+  // 그대로 뜬다 — 진단사가 "재선택"을 눌러야만 검색 단계로 돌아간다.
   const [specModalVisible, setSpecModalVisible] = useState(false);
   const [specStep, setSpecStep] = useState<"search" | "listings">("search");
   const [specLoading, setSpecLoading] = useState(false);
   const [specMatches, setSpecMatches] = useState<
     { manufacturer: string; model: string; badge: string; count: number }[]
   >([]);
-  const [specSelected, setSpecSelected] = useState<{ manufacturer: string; model: string; badge: string } | null>(null);
+  const [specSelected, setSpecSelected] = useState<{ manufacturer: string; model: string; badge: string } | null>(
+    carSpecManufacturerParam && carSpecModelParam
+      ? {
+          manufacturer: String(carSpecManufacturerParam),
+          model: String(carSpecModelParam),
+          badge: String(carSpecBadgeParam || ""),
+        }
+      : null,
+  );
   const [specListings, setSpecListings] = useState<
     { id: string; model: string; badge: string; year: string; mileage: number; fuel: string; priceManwon: number }[]
   >([]);
 
+  const fetchSpecListings = async (m: { manufacturer: string; model: string; badge: string }) => {
+    setSpecLoading(true);
+    setSpecListings([]);
+    try {
+      const qs = `manufacturer=${encodeURIComponent(m.manufacturer)}&model=${encodeURIComponent(m.model)}&badge=${encodeURIComponent(m.badge)}`;
+      const res = await fetch(`${API_BASE_URL}/external/car-spec/listings?${qs}`);
+      const data = await res.json();
+      setSpecListings(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // 무시 — 아래 빈 상태 문구로 대체
+    } finally {
+      setSpecLoading(false);
+    }
+  };
+
   const openSpecModal = async () => {
+    // 이미 이 예약에 저장된 등급이 있으면 재검색 없이 바로 그 등급의 매물을 보여준다.
+    if (specSelected) {
+      setSpecModalVisible(true);
+      setSpecStep("listings");
+      fetchSpecListings(specSelected);
+      return;
+    }
     if (!carModel?.trim()) {
       showAlert("알림", "차종을 먼저 입력해주세요.");
       return;
@@ -440,18 +482,33 @@ export default function CarEvaluationSheet() {
   const selectSpecMatch = async (m: { manufacturer: string; model: string; badge: string }) => {
     setSpecSelected(m);
     setSpecStep("listings");
-    setSpecLoading(true);
+    fetchSpecListings(m);
+    // 예약에 고정 저장 — 실패해도 이번 화면 사용에는 영향 없어 조용히 무시
+    fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(m),
+    }).catch(() => {});
+  };
+
+  const resetSpecSelection = () => {
+    setSpecSelected(null);
     setSpecListings([]);
-    try {
-      const qs = `manufacturer=${encodeURIComponent(m.manufacturer)}&model=${encodeURIComponent(m.model)}&badge=${encodeURIComponent(m.badge)}`;
-      const res = await fetch(`${API_BASE_URL}/external/car-spec/listings?${qs}`);
-      const data = await res.json();
-      setSpecListings(Array.isArray(data) ? data : []);
-    } catch (e) {
-      // 무시 — 아래 빈 상태 문구로 대체
-    } finally {
-      setSpecLoading(false);
+    setSpecStep("search");
+    if (carModel?.trim()) {
+      setSpecLoading(true);
+      setSpecMatches([]);
+      fetch(`${API_BASE_URL}/external/car-spec/search?q=${encodeURIComponent(carModel.trim())}`)
+        .then((res) => res.json())
+        .then((data) => setSpecMatches(Array.isArray(data) ? data : []))
+        .catch(() => {})
+        .finally(() => setSpecLoading(false));
     }
+    fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).catch(() => {});
   };
   const [savingCarInfo, setSavingCarInfo] = useState(false);
 
@@ -2614,8 +2671,17 @@ export default function CarEvaluationSheet() {
                 <SafeAreaView style={{ flex: 1, backgroundColor: "#000" }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 }}>
                     {specStep === "listings" ? (
-                      <TouchableOpacity onPress={() => setSpecStep("search")} style={{ padding: 4 }}>
-                        <Ionicons name="chevron-back" size={26} color="#fff" />
+                      <TouchableOpacity
+                        onPress={() =>
+                          showAlert("등급 재선택", "저장된 등급을 지우고 다시 검색할까요?", [
+                            { text: "취소", style: "cancel" },
+                            { text: "재선택", onPress: resetSpecSelection },
+                          ])
+                        }
+                        style={{ flexDirection: "row", alignItems: "center", padding: 4 }}
+                      >
+                        <Ionicons name="chevron-back" size={22} color="#fff" />
+                        <Text style={{ color: "#fff", fontSize: 13, marginLeft: 2 }}>재선택</Text>
                       </TouchableOpacity>
                     ) : <View style={{ width: 34 }} />}
                     <TouchableOpacity onPress={() => setSpecModalVisible(false)} style={{ padding: 4 }}>

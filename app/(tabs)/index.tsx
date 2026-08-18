@@ -149,6 +149,9 @@ interface DiagnosisItem {
   carOwner: string;
   carNumber: string;
   carModel?: string;
+  carSpecManufacturer?: string;
+  carSpecModel?: string;
+  carSpecBadge?: string;
   dealerName?: string | null;
   dealerContact?: string | null;
   listingUrl?: string | null;
@@ -891,7 +894,7 @@ export default function DiagnosisManagement() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '' } })}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '', carSpecManufacturer: item.carSpecManufacturer || '', carSpecModel: item.carSpecModel || '', carSpecBadge: item.carSpecBadge || '' } })}
           >
             <Text style={{ color: isDark ? '#000' : '#fff', fontWeight: 'bold' }}>진단 시작</Text>
           </TouchableOpacity>
@@ -917,14 +920,14 @@ export default function DiagnosisManagement() {
         <View style={styles.btnGroup}>
           <TouchableOpacity
             style={[styles.subBtn, { flex: canEdit ? 1 : undefined, width: canEdit ? undefined : '100%', backgroundColor: theme.buttonSub }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '' } })}
+            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'view', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '', carSpecManufacturer: item.carSpecManufacturer || '', carSpecModel: item.carSpecModel || '', carSpecBadge: item.carSpecBadge || '' } })}
           >
             <Text style={[styles.subBtnText, { color: theme.textSub }]}>진단 내역 보기</Text>
           </TouchableOpacity>
           {canEdit && (
             <TouchableOpacity
               style={[styles.subBtn, { flex: 1, backgroundColor: theme.accent }]}
-              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '' } })}
+              onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', mode: 'edit', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '', carSpecManufacturer: item.carSpecManufacturer || '', carSpecModel: item.carSpecModel || '', carSpecBadge: item.carSpecBadge || '' } })}
             >
               <Text style={[styles.subBtnText, { color: '#fff' }]}>수정하기</Text>
             </TouchableOpacity>
