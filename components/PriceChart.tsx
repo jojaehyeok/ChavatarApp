@@ -132,7 +132,7 @@ export default function PriceChart({
           </Text>
           {!!subtitle && (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#5b8dff" }} />
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#63489a" }} />
               <Text style={{ color: "#888", fontSize: 12 }}>{subtitle}</Text>
             </View>
           )}
@@ -151,10 +151,10 @@ export default function PriceChart({
           <Line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="#2a2a2a" strokeWidth={1} />
 
           {points.map((p, i) => (
-            <Circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#3a5fd9" opacity={0.5} />
+            <Circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#63489a" opacity={0.5} />
           ))}
 
-          <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} strokeLinecap="round" />
+          <Path d={curvePath} fill="none" stroke="#63489a" strokeWidth={2.5} strokeLinecap="round" />
 
           {targetX != null && targetY != null && (
             <>
@@ -163,11 +163,11 @@ export default function PriceChart({
                 x2={sx(targetX)}
                 y1={sy(targetY)}
                 y2={H - PAD_B}
-                stroke="#5b8dff"
+                stroke="#63489a"
                 strokeWidth={1}
                 strokeDasharray="3,3"
               />
-              <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
+              <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#63489a" stroke="#000" strokeWidth={2} />
             </>
           )}
         </Svg>
@@ -186,7 +186,7 @@ export default function PriceChart({
                 textAlign: "center",
                 fontSize: l.bold ? 11 : 10,
                 fontWeight: l.bold ? "700" : "400",
-                color: l.bold ? "#5b8dff" : "#555",
+                color: l.bold ? "#63489a" : "#555",
               }}
             >
               {l.text}
