@@ -1,5 +1,5 @@
 // 사고감가표(사용자 제공 참고자료) 기준 — X(교환) 부위별 감가율(%).
-// B(판금)는 감가 계산에서 제외, W(용접)는 이 값의 절반을 적용한다.
+// B(판금)·W(용접)는 이 값의 절반을 적용한다.
 export const DEPRECIATION_RATES: Record<string, number> = {
   후드: 4,
   프론트펜더: 2,
@@ -57,7 +57,7 @@ export const PART_CATEGORY: (string | null)[] = [
 ];
 
 // checkedDamages(진단 화면의 손상 체크 배열)를 받아 전체 감가율(%)을 계산.
-// X=교환(전체 반영) / W=용접(절반 반영) / B=판금(반영 안 함).
+// X=교환(전체 반영) / B=판금·W=용접(둘 다 절반 반영).
 export function computeDamageDepreciationPct(checkedDamages: string[][]): number {
   let total = 0;
   checkedDamages.forEach((symbols, i) => {
@@ -67,8 +67,7 @@ export function computeDamageDepreciationPct(checkedDamages: string[][]): number
     if (rate == null) return;
     const symbol = symbols?.[0];
     if (symbol === "X") total += rate;
-    else if (symbol === "W") total += rate / 2;
-    // symbol === "B" (판금) — 계상 제외
+    else if (symbol === "W" || symbol === "B") total += rate / 2;
   });
   return total;
 }
