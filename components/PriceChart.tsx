@@ -1,6 +1,6 @@
 import React from "react";
 import { Dimensions, Text, View } from "react-native";
-import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
+import Svg, { Circle, Line, Path, Rect, Text as SvgText } from "react-native-svg";
 
 type Listing = { mileage: number; priceManwon: number };
 
@@ -91,9 +91,8 @@ export default function PriceChart({
 
   const yGrid = Array.from({ length: Math.round(maxY / yAxis.step) + 1 }, (_, i) => yAxis.step * i);
   const targetX = targetMileage != null ? targetMileage / 10000 : null;
-  const targetSx = targetX != null ? sx(targetX) : null;
-  const showMinLabel = targetSx == null || Math.abs(sx(minX) - targetSx) > 32;
-  const showMaxLabel = targetSx == null || Math.abs(sx(maxX) - targetSx) > 32;
+  // 내 차 라벨은 x축 눈금(0/최대)과 같은 줄에 두면 서로 겹치니, 점 위에 알약 배지로 따로 띄운다.
+  const targetLabelY = targetY != null ? Math.max(PAD_T + 12, sy(targetY) - 16) : 0;
 
   return (
     <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
@@ -134,6 +133,13 @@ export default function PriceChart({
 
         <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} strokeLinecap="round" />
 
+        <SvgText x={sx(minX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="start">
+          {Math.round(minX)}만km
+        </SvgText>
+        <SvgText x={sx(maxX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="end">
+          {Math.round(maxX)}만km
+        </SvgText>
+
         {targetX != null && targetY != null && (
           <>
             <Line
@@ -145,21 +151,19 @@ export default function PriceChart({
               strokeWidth={1}
               strokeDasharray="3,3"
             />
-            <SvgText x={sx(targetX)} y={H - PAD_B + 18} fontSize={11} fontWeight="700" fill="#5b8dff" textAnchor="middle">
+            <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
+            <Rect
+              x={sx(targetX) - 28}
+              y={targetLabelY - 12}
+              width={56}
+              height={20}
+              rx={10}
+              fill="#5b8dff"
+            />
+            <SvgText x={sx(targetX)} y={targetLabelY + 3} fontSize={10} fontWeight="700" fill="#fff" textAnchor="middle">
               {Math.round(targetX)}만km
             </SvgText>
-            <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
           </>
-        )}
-        {showMinLabel && (
-          <SvgText x={sx(minX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="start">
-            {Math.round(minX)}만km
-          </SvgText>
-        )}
-        {showMaxLabel && (
-          <SvgText x={sx(maxX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="end">
-            {Math.round(maxX)}만km
-          </SvgText>
         )}
       </Svg>
     </View>
