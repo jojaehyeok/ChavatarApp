@@ -105,9 +105,9 @@ export default function PriceChart({
       {targetY != null && (
         <View style={{ marginBottom: 16 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <Text style={{ color: "#fff", fontSize: 15, fontWeight: "900" }}>내 차 예상시세</Text>
+            <Text style={{ color: "#fff", fontSize: 15, fontWeight: "900" }}>실거래 판매시세</Text>
             <View style={{ backgroundColor: "#1c1c1c", borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 }}>
-              <Text style={{ color: "#999", fontSize: 10, fontWeight: "700" }}>무사고 기준</Text>
+              <Text style={{ color: "#999", fontSize: 10, fontWeight: "700" }}>호가 기준</Text>
             </View>
           </View>
           <Text style={{ color: "#fff", fontSize: 26, fontWeight: "900", marginBottom: 6 }}>
