@@ -107,10 +107,13 @@ export default function PriceChart({
   const xLabels: { text: string; cx: number; bold: boolean }[] = [];
   xTicks.forEach((t) => {
     if (targetSxVal != null && Math.abs(sx(t) - targetSxVal) < HIDE_PX) return;
-    xLabels.push({ text: `${Math.round(t)}만km`, cx: sx(t), bold: false });
+    xLabels.push({ text: t === 0 ? "0km" : `${Math.round(t)}만km`, cx: sx(t), bold: false });
   });
   if (targetX != null && targetY != null) {
-    xLabels.push({ text: `내차 ${Math.round(targetX)}만km`, cx: sx(targetX), bold: true });
+    // 내 차 위치는 축 눈금(정수)과 달리 소수 첫째자리까지 보여준다(55,435km → 5.5만km).
+    const rounded = Math.round(targetX * 10) / 10;
+    const label = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+    xLabels.push({ text: `내차 ${label}만km`, cx: sx(targetX), bold: true });
   }
 
   return (
