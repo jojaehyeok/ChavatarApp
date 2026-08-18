@@ -46,6 +46,7 @@ import CarEvaluationDamageChecker from "../components/CarEvaluationDamageChecker
 import PhotoAnnotator from "../components/PhotoAnnotator";
 import PriceChart from "../components/PriceChart";
 import { computeDamageDepreciationPct } from "../constants/damageDepreciation";
+import { computePriceEstimate } from "../utils/priceEstimate";
 
 // ─── 상수 ─────────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get("window");
@@ -441,16 +442,41 @@ export default function CarEvaluationSheet() {
   const fetchSpecListings = async (m: { manufacturer: string; model: string; badge: string }) => {
     setSpecLoading(true);
     setSpecListings([]);
+    let data: any[] = [];
     try {
       const qs = `manufacturer=${encodeURIComponent(m.manufacturer)}&model=${encodeURIComponent(m.model)}&badge=${encodeURIComponent(m.badge)}`;
       const res = await fetch(`${API_BASE_URL}/external/car-spec/listings?${qs}`);
-      const data = await res.json();
+      data = await res.json();
       setSpecListings(Array.isArray(data) ? data : []);
     } catch (e) {
       // 무시 — 아래 빈 상태 문구로 대체
     } finally {
       setSpecLoading(false);
     }
+    return Array.isArray(data) ? data : [];
+  };
+
+  // 예약에 등급 + 그 시점 시세 추정치(+사고감가 반영치, agent 등급만)를 저장 — 관리자 대시보드가
+  // 재계산 없이 그대로 보여주는 용도. 실패해도 이번 화면 사용에는 영향 없어 조용히 무시.
+  const saveCarSpecWithEstimate = (
+    m: { manufacturer: string; model: string; badge: string },
+    listings: { mileage: number; priceManwon: number }[],
+  ) => {
+    const targetMileage = parseInt(mileage.replace(/,/g, ""), 10) || undefined;
+    const depPct = isAgentTier ? computeDamageDepreciationPct(checkedDamages) : undefined;
+    const estimate = computePriceEstimate(listings, targetMileage, depPct);
+    fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...m,
+        rangeLow: estimate?.rangeLow,
+        rangeHigh: estimate?.rangeHigh,
+        depLow: estimate?.depLow ?? undefined,
+        depHigh: estimate?.depHigh ?? undefined,
+        depPct: estimate?.depLow != null ? depPct : undefined,
+      }),
+    }).catch(() => {});
   };
 
   const openSpecModal = async () => {
@@ -458,7 +484,8 @@ export default function CarEvaluationSheet() {
     if (specSelected) {
       setSpecModalVisible(true);
       setSpecStep("listings");
-      fetchSpecListings(specSelected);
+      // 다시 열 때마다 최신 시세/사고감가로 갱신 저장(그 사이 손상체크가 바뀌었을 수 있어서).
+      fetchSpecListings(specSelected).then((listings) => saveCarSpecWithEstimate(specSelected, listings));
       return;
     }
     if (!carModel?.trim()) {
@@ -483,13 +510,8 @@ export default function CarEvaluationSheet() {
   const selectSpecMatch = async (m: { manufacturer: string; model: string; badge: string }) => {
     setSpecSelected(m);
     setSpecStep("listings");
-    fetchSpecListings(m);
-    // 예약에 고정 저장 — 실패해도 이번 화면 사용에는 영향 없어 조용히 무시
-    fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(m),
-    }).catch(() => {});
+    const listings = await fetchSpecListings(m);
+    saveCarSpecWithEstimate(m, listings);
   };
 
   const resetSpecSelection = () => {
@@ -2767,6 +2789,7 @@ export default function CarEvaluationSheet() {
                               targetMileage={parseInt(mileage.replace(/,/g, ""), 10) || undefined}
                               subtitle={specSelected ? `${specSelected.manufacturer} ${specSelected.model} · ${specSelected.badge}` : undefined}
                               depreciationPct={isAgentTier ? computeDamageDepreciationPct(checkedDamages) : undefined}
+                              precise={isAgentTier}
                             />
                             {specListings.map((l) => (
                             <View

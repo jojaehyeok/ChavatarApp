@@ -1,6 +1,7 @@
 import React from "react";
 import { Dimensions, Text, View } from "react-native";
 import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
+import { computePriceEstimate } from "../utils/priceEstimate";
 
 type Listing = { mileage: number; priceManwon: number };
 
@@ -41,12 +42,15 @@ export default function PriceChart({
   targetMileage,
   subtitle,
   depreciationPct,
+  precise = false,
 }: {
   listings: Listing[];
   targetMileage?: number;
   subtitle?: string;
   // 사고감가율(%) — 진단사가 체크한 손상 부위 기준으로 계산된 값. agent 등급 데모 전용.
   depreciationPct?: number;
+  // agent 등급 전용 — false(일반 진단사)면 시세 범위를 100만원 단위로 뭉뚱그려서 개략적으로만 보여준다.
+  precise?: boolean;
 }) {
   const points = listings
     .filter((l) => l.mileage > 0 && l.priceManwon > 0)
@@ -81,24 +85,19 @@ export default function PriceChart({
     return `${i === 0 ? "M" : "L"}${sx(x)},${sy(Math.max(0, predict(x)))}`;
   }).join(" ");
 
-  const residuals = points.map((p) => p.y - predict(p.x));
-  const meanSq = residuals.reduce((s, r) => s + r * r, 0) / residuals.length;
-  const stdev = Math.sqrt(meanSq);
+  const targetY: number | null =
+    targetMileage != null && targetMileage > 0 ? Math.max(0, predict(targetMileage / 10000)) : null;
 
-  let targetY: number | null = null;
-  let rangeLow = 0, rangeHigh = 0;
-  if (targetMileage != null && targetMileage > 0) {
-    const tx = targetMileage / 10000;
-    targetY = Math.max(0, predict(tx));
-    const margin = Math.max(stdev * 0.5, targetY * 0.03);
-    rangeLow = Math.round((targetY - margin) / 10) * 10;
-    rangeHigh = Math.round((targetY + margin) / 10) * 10;
-  }
-
-  const hasDepreciation = !!depreciationPct && depreciationPct > 0;
-  const depFactor = hasDepreciation ? 1 - depreciationPct! / 100 : 1;
-  const depRangeLow = Math.round((rangeLow * depFactor) / 10) * 10;
-  const depRangeHigh = Math.round((rangeHigh * depFactor) / 10) * 10;
+  const estimate = computePriceEstimate(listings, targetMileage, depreciationPct);
+  // 일반 진단사에게는 100만원 단위로 뭉뚱그려서 "개략적인" 범위만 보여준다(양끝을 밖으로 벌려
+  // 반올림해서 실제 값이 항상 표시 범위 안에 들어오게).
+  const roughen = (v: number, dir: "down" | "up") =>
+    dir === "down" ? Math.floor(v / 100) * 100 : Math.ceil(v / 100) * 100;
+  const rangeLow = estimate ? (precise ? estimate.rangeLow : roughen(estimate.rangeLow, "down")) : 0;
+  const rangeHigh = estimate ? (precise ? estimate.rangeHigh : roughen(estimate.rangeHigh, "up")) : 0;
+  const hasDepreciation = estimate?.depLow != null && estimate?.depHigh != null;
+  const depRangeLow = hasDepreciation ? (precise ? estimate!.depLow! : roughen(estimate!.depLow!, "down")) : 0;
+  const depRangeHigh = hasDepreciation ? (precise ? estimate!.depHigh! : roughen(estimate!.depHigh!, "up")) : 0;
 
   const yGrid = Array.from({ length: Math.round(maxY / yAxis.step) + 1 }, (_, i) => yAxis.step * i);
   const targetX = targetMileage != null ? targetMileage / 10000 : null;
