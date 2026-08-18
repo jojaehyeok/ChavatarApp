@@ -510,6 +510,16 @@ export default function DiagnosisManagement() {
     }).catch(() => {});
   }, [currentDriverId]);
 
+  // "확정문자"용 — "2026-08-17 14:00"/"2026-08-17T14:00" 둘 다 받아서 "8월 17일 (월) 14:00"로.
+  const formatConfirmSchedule = (dt?: string | null): string => {
+    if (!dt) return '';
+    const [datePart, timePart] = dt.replace('T', ' ').split(' ');
+    const [y, m, d] = (datePart || '').split('-').map(Number);
+    if (!y || !m || !d) return dt;
+    const dayLabel = DAY_KO[new Date(y, m - 1, d).getDay()];
+    return `${m}월 ${d}일 (${dayLabel}) ${timePart || ''}`.trim();
+  };
+
   const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy', target: 'dealer' | 'customer' = 'dealer') => {
     const rawContact = target === 'customer' ? selectedItem?.customerContact : selectedItem?.contact;
     if (!rawContact) {
@@ -524,7 +534,25 @@ export default function DiagnosisManagement() {
     const phone = rawContact.replace(/[^0-9]/g, '');
     let url = type === 'tel' ? `tel:${phone}` : `sms:${phone}`;
     if (type === 'confirm') {
-      const message = `[카비오] 안녕하세요 진단사 ${currentDriverName}입니다. ${selectedItem?.carNumber} 차량 진단을 위해 ${selectedItem?.preferredDateTime}에 방문 예정입니다.`;
+      const schedule = formatConfirmSchedule(selectedItem?.preferredDateTime);
+      const addressLine = `${selectedItem?.address ?? ''}${selectedItem?.detailAddress ? ` ${selectedItem.detailAddress}` : ''}`;
+      const message = [
+        `안녕하세요. 카비어 진단평가사 ${currentDriverName}입니다.`,
+        `검차서비스를 신청해 주셔서 감사합니다.`,
+        ``,
+        `[진단 일정]`,
+        `일정 : ${schedule}`,
+        `주소 : ${addressLine}`,
+        ``,
+        `[준비해 주세요]`,
+        `1. 자동차 등록증 원본을 챙겨주세요.`,
+        `2. 주차 2칸 정도의 공간을 확보해 주세요.`,
+        `3. 트렁크 등 차량에 있는 짐을 미리 치워주시면 더 빠르게 진단할 수 있어요.`,
+        `4. 미리 세차를 해주시면 사진이 잘 나와 판매 확률이 올라갈 수 있어요.`,
+        ``,
+        `진단 당일 뵙겠습니다.`,
+        `감사합니다.`,
+      ].join('\n');
       url += `${Platform.OS === 'ios' ? '&' : '?'}body=${encodeURIComponent(message)}`;
     }
     setContactModalVisible(false);
@@ -1228,6 +1256,9 @@ export default function DiagnosisManagement() {
                   )}
                   {selectedItem?.customerContact && (
                     <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('tel', 'customer')}><Ionicons name="call-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>차주에게 전화하기</Text></TouchableOpacity>
+                  )}
+                  {selectedItem?.customerContact && (
+                    <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('confirm', 'customer')}><Ionicons name="checkmark-done-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>확정문자 보내기</Text></TouchableOpacity>
                   )}
                   <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms', 'dealer')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>문자 보내기</Text></TouchableOpacity>
                   <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy', 'dealer')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
