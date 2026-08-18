@@ -27,9 +27,11 @@ function quadFit(points: { x: number; y: number }[]) {
 export default function PriceChart({
   listings,
   targetMileage,
+  subtitle,
 }: {
   listings: Listing[];
   targetMileage?: number;
+  subtitle?: string;
 }) {
   const points = listings
     .filter((l) => l.mileage > 0 && l.priceManwon > 0)
@@ -43,7 +45,7 @@ export default function PriceChart({
   const screenW = Dimensions.get("window").width;
   const W = screenW - 40;
   const H = 260;
-  const PAD_L = 54, PAD_B = 26, PAD_T = 14, PAD_R = 14;
+  const PAD_L = 58, PAD_B = 28, PAD_T = 14, PAD_R = 14;
 
   const xs = points.map((p) => p.x);
   const maxX = Math.max(...xs, (targetMileage ?? 0) / 10000) * 1.08 || 1;
@@ -76,56 +78,69 @@ export default function PriceChart({
 
   const yTicks = 4;
   const yGrid = Array.from({ length: yTicks + 1 }, (_, i) => (maxY / yTicks) * i);
+  const targetX = targetMileage != null ? targetMileage / 10000 : null;
 
   return (
     <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
       {targetY != null && (
-        <View style={{ marginBottom: 14 }}>
-          <Text style={{ color: "#888", fontSize: 12, fontWeight: "700", marginBottom: 4 }}>
-            내 차 예상시세 (무사고 기준)
-          </Text>
-          <Text style={{ color: "#fff", fontSize: 26, fontWeight: "900" }}>
+        <View style={{ marginBottom: 16 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <Text style={{ color: "#fff", fontSize: 15, fontWeight: "900" }}>내 차 예상시세</Text>
+            <View style={{ backgroundColor: "#1c1c1c", borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 }}>
+              <Text style={{ color: "#999", fontSize: 10, fontWeight: "700" }}>무사고 기준</Text>
+            </View>
+          </View>
+          <Text style={{ color: "#fff", fontSize: 26, fontWeight: "900", marginBottom: 6 }}>
             {rangeLow.toLocaleString()} ~ {rangeHigh.toLocaleString()}
             <Text style={{ fontSize: 15, color: "#888", fontWeight: "700" }}> 만원</Text>
           </Text>
+          {!!subtitle && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#5b8dff" }} />
+              <Text style={{ color: "#888", fontSize: 12 }}>{subtitle}</Text>
+            </View>
+          )}
         </View>
       )}
       <Svg width={W} height={H}>
         {yGrid.map((y, i) => (
           <React.Fragment key={i}>
-            <Line x1={PAD_L} x2={W - PAD_R} y1={sy(y)} y2={sy(y)} stroke="#222" strokeWidth={1} />
+            <Line x1={PAD_L} x2={W - PAD_R} y1={sy(y)} y2={sy(y)} stroke="#1e1e1e" strokeWidth={1} />
             <SvgText x={PAD_L - 8} y={sy(y) + 4} fontSize={10} fill="#666" textAnchor="end">
-              {y >= 10000 ? `${(y / 10000).toFixed(1)}억` : `${Math.round(y).toLocaleString()}`}
+              {Math.round(y).toLocaleString()}
             </SvgText>
           </React.Fragment>
         ))}
-        <Line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="#333" strokeWidth={1} />
-        {[0, maxX / 2, maxX].map((x, i) => (
-          <SvgText key={i} x={sx(x)} y={H - PAD_B + 16} fontSize={10} fill="#666" textAnchor="middle">
-            {Math.round(x * 10) / 10}만km
-          </SvgText>
-        ))}
+        <Line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="#2a2a2a" strokeWidth={1} />
 
         {points.map((p, i) => (
-          <Circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#3a5fd9" opacity={0.55} />
+          <Circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#3a5fd9" opacity={0.5} />
         ))}
 
-        <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} />
+        <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} strokeLinecap="round" />
 
-        {targetY != null && (
+        {targetX != null && targetY != null && (
           <>
             <Line
-              x1={sx(targetMileage! / 10000)}
-              x2={sx(targetMileage! / 10000)}
+              x1={sx(targetX)}
+              x2={sx(targetX)}
               y1={sy(targetY)}
               y2={H - PAD_B}
               stroke="#5b8dff"
               strokeWidth={1}
               strokeDasharray="3,3"
             />
-            <Circle cx={sx(targetMileage! / 10000)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
+            <SvgText x={sx(targetX)} y={H - PAD_B + 18} fontSize={11} fontWeight="700" fill="#5b8dff" textAnchor="middle">
+              {Math.round(targetX * 10) / 10}만km
+            </SvgText>
+            <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
           </>
         )}
+        {[0, maxX].map((x, i) => (
+          <SvgText key={i} x={sx(x)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor={i === 0 ? "start" : "end"}>
+            {Math.round(x * 10) / 10}만km
+          </SvgText>
+        ))}
       </Svg>
     </View>
   );

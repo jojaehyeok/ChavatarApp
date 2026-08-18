@@ -2682,6 +2682,7 @@ export default function CarEvaluationSheet() {
                             <PriceChart
                               listings={specListings}
                               targetMileage={parseInt(mileage.replace(/,/g, ""), 10) || undefined}
+                              subtitle={specSelected ? `${specSelected.manufacturer} ${specSelected.model} · ${specSelected.badge}` : undefined}
                             />
                             {specListings.map((l) => (
                             <View
