@@ -1609,6 +1609,35 @@ export default function CarEvaluationSheet() {
         body: JSON.stringify({ status: "COMPLETED" }),
       });
 
+      // 진단 완료 시점의 최종 손상체크로 사고감가를 다시 계산해서 저장 — 상세정보 모달을
+      // 다시 안 열어도(등급 선택 이후 손상체크가 바뀐 경우 포함) 관리자가 보는 값이 최신이 되게.
+      // agent 등급 여부와 무관하게 저장한다(대시보드용 데이터라 앱 내 노출 제한과는 별개).
+      if (specSelected) {
+        try {
+          const listings = await fetchSpecListings(specSelected);
+          const depPct = computeDamageDepreciationPct(checkedDamages);
+          const estimate = computePriceEstimate(
+            listings,
+            parseInt(mileage.replace(/,/g, ""), 10) || undefined,
+            depPct,
+          );
+          fetch(`${API_BASE_URL}/external/request/${requestId}/car-spec`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...specSelected,
+              rangeLow: estimate?.rangeLow,
+              rangeHigh: estimate?.rangeHigh,
+              depLow: estimate?.depLow ?? undefined,
+              depHigh: estimate?.depHigh ?? undefined,
+              depPct: estimate?.depLow != null ? depPct : undefined,
+            }),
+          }).catch(() => {});
+        } catch (e) {
+          // 무시 — 진단 제출 자체는 이미 완료됐으니 시세 갱신 실패로 흐름을 막지 않는다.
+        }
+      }
+
       // 제출 완료 → 남은 업로드가 자동으로 서버에 패치
       _G.submittedId = String(requestId);
 
