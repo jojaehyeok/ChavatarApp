@@ -101,6 +101,18 @@ export default function PriceChart({
   const xTicks = Array.from({ length: Math.round(maxX / xAxis.step) + 1 }, (_, i) => xAxis.step * i);
   const HIDE_PX = 40;
 
+  // react-native-svg의 <Text>는 이 기기(삼성 폰트)에서 숫자+한글이 붙으면("5만km") 글자 폭
+  // 계산이 깨져서 서로 겹쳐 보이는 버그가 있다(축 눈금 간격과 무관하게 처음부터 있었던 문제).
+  // SVG 텍스트 대신 일반 RN <Text>(네이티브 TextView)로 그래프 위에 절대좌표로 얹어서 우회한다.
+  const xLabels: { text: string; cx: number; bold: boolean }[] = [];
+  xTicks.forEach((t) => {
+    if (targetSxVal != null && Math.abs(sx(t) - targetSxVal) < HIDE_PX) return;
+    xLabels.push({ text: `${Math.round(t)}만km`, cx: sx(t), bold: false });
+  });
+  if (targetX != null && targetY != null) {
+    xLabels.push({ text: `내차 ${Math.round(targetX)}만km`, cx: sx(targetX), bold: true });
+  }
+
   return (
     <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
       {targetY != null && (
@@ -123,51 +135,61 @@ export default function PriceChart({
           )}
         </View>
       )}
-      <Svg width={W} height={H}>
-        {yGrid.map((y, i) => (
-          <React.Fragment key={i}>
-            <Line x1={PAD_L} x2={W - PAD_R} y1={sy(y)} y2={sy(y)} stroke="#1e1e1e" strokeWidth={1} />
-            <SvgText x={PAD_L - 8} y={sy(y) + 4} fontSize={10} fill="#666" textAnchor="end">
-              {Math.round(y).toLocaleString()}
-            </SvgText>
-          </React.Fragment>
-        ))}
-        <Line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="#2a2a2a" strokeWidth={1} />
+      <View style={{ position: "relative" }}>
+        <Svg width={W} height={H}>
+          {yGrid.map((y, i) => (
+            <React.Fragment key={i}>
+              <Line x1={PAD_L} x2={W - PAD_R} y1={sy(y)} y2={sy(y)} stroke="#1e1e1e" strokeWidth={1} />
+              <SvgText x={PAD_L - 8} y={sy(y) + 4} fontSize={10} fill="#666" textAnchor="end">
+                {Math.round(y).toLocaleString()}
+              </SvgText>
+            </React.Fragment>
+          ))}
+          <Line x1={PAD_L} x2={W - PAD_R} y1={H - PAD_B} y2={H - PAD_B} stroke="#2a2a2a" strokeWidth={1} />
 
-        {points.map((p, i) => (
-          <Circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#3a5fd9" opacity={0.5} />
-        ))}
+          {points.map((p, i) => (
+            <Circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#3a5fd9" opacity={0.5} />
+          ))}
 
-        <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} strokeLinecap="round" />
+          <Path d={curvePath} fill="none" stroke="#5b8dff" strokeWidth={2.5} strokeLinecap="round" />
 
-        {xTicks.map((t, i) => {
-          if (targetSxVal != null && Math.abs(sx(t) - targetSxVal) < HIDE_PX) return null;
-          const anchor = i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle";
+          {targetX != null && targetY != null && (
+            <>
+              <Line
+                x1={sx(targetX)}
+                x2={sx(targetX)}
+                y1={sy(targetY)}
+                y2={H - PAD_B}
+                stroke="#5b8dff"
+                strokeWidth={1}
+                strokeDasharray="3,3"
+              />
+              <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
+            </>
+          )}
+        </Svg>
+
+        {xLabels.map((l, i) => {
+          const estWidth = l.text.length * (l.bold ? 8 : 7);
           return (
-            <SvgText key={i} x={sx(t)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor={anchor}>
-              {Math.round(t)}만km
-            </SvgText>
+            <Text
+              key={i}
+              style={{
+                position: "absolute",
+                left: l.cx - estWidth / 2,
+                top: H - PAD_B + 10,
+                width: estWidth,
+                textAlign: "center",
+                fontSize: l.bold ? 11 : 10,
+                fontWeight: l.bold ? "700" : "400",
+                color: l.bold ? "#5b8dff" : "#555",
+              }}
+            >
+              {l.text}
+            </Text>
           );
         })}
-
-        {targetX != null && targetY != null && (
-          <>
-            <Line
-              x1={sx(targetX)}
-              x2={sx(targetX)}
-              y1={sy(targetY)}
-              y2={H - PAD_B}
-              stroke="#5b8dff"
-              strokeWidth={1}
-              strokeDasharray="3,3"
-            />
-            <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
-            <SvgText x={sx(targetX)} y={H - PAD_B + 18} fontSize={10} fontWeight="700" fill="#5b8dff" textAnchor="middle">
-              내차 {Math.round(targetX)}만km
-            </SvgText>
-          </>
-        )}
-      </Svg>
+      </View>
     </View>
   );
 }
