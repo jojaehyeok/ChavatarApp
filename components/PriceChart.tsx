@@ -4,6 +4,18 @@ import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
 
 type Listing = { mileage: number; priceManwon: number };
 
+// 축 눈금을 100/200/500 단위 같은 "깔끔한" 값으로 반올림(닫힌 구간의 최대값도 그 배수로 맞춤)
+function niceAxis(rawMax: number, ticks: number) {
+  if (rawMax <= 0) return { step: 1, max: ticks };
+  const roughStep = rawMax / ticks;
+  const exponent = Math.floor(Math.log10(roughStep));
+  const fraction = roughStep / Math.pow(10, exponent);
+  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  const step = niceFraction * Math.pow(10, exponent);
+  const max = step * Math.ceil(rawMax / step);
+  return { step, max };
+}
+
 function quadFit(points: { x: number; y: number }[]) {
   let S0 = 0, S1 = 0, S2 = 0, S3 = 0, S4 = 0, T0 = 0, T1 = 0, T2 = 0;
   for (const { x, y } of points) {
@@ -51,7 +63,8 @@ export default function PriceChart({
   const maxX = Math.max(...xs, (targetMileage ?? 0) / 10000) * 1.08 || 1;
   const minX = 0;
   const ys = points.map((p) => p.y);
-  const maxY = Math.max(...ys) * 1.08;
+  const yAxis = niceAxis(Math.max(...ys) * 1.08, 4);
+  const maxY = yAxis.max;
   const minY = 0;
 
   const sx = (x: number) => PAD_L + ((x - minX) / (maxX - minX)) * (W - PAD_L - PAD_R);
@@ -76,9 +89,11 @@ export default function PriceChart({
     rangeHigh = Math.round((targetY + margin) / 10) * 10;
   }
 
-  const yTicks = 4;
-  const yGrid = Array.from({ length: yTicks + 1 }, (_, i) => (maxY / yTicks) * i);
+  const yGrid = Array.from({ length: Math.round(maxY / yAxis.step) + 1 }, (_, i) => yAxis.step * i);
   const targetX = targetMileage != null ? targetMileage / 10000 : null;
+  const targetSx = targetX != null ? sx(targetX) : null;
+  const showMinLabel = targetSx == null || Math.abs(sx(minX) - targetSx) > 32;
+  const showMaxLabel = targetSx == null || Math.abs(sx(maxX) - targetSx) > 32;
 
   return (
     <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
@@ -131,16 +146,21 @@ export default function PriceChart({
               strokeDasharray="3,3"
             />
             <SvgText x={sx(targetX)} y={H - PAD_B + 18} fontSize={11} fontWeight="700" fill="#5b8dff" textAnchor="middle">
-              {Math.round(targetX * 10) / 10}만km
+              {Math.round(targetX)}만km
             </SvgText>
             <Circle cx={sx(targetX)} cy={sy(targetY)} r={6} fill="#5b8dff" stroke="#000" strokeWidth={2} />
           </>
         )}
-        {[0, maxX].map((x, i) => (
-          <SvgText key={i} x={sx(x)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor={i === 0 ? "start" : "end"}>
-            {Math.round(x * 10) / 10}만km
+        {showMinLabel && (
+          <SvgText x={sx(minX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="start">
+            {Math.round(minX)}만km
           </SvgText>
-        ))}
+        )}
+        {showMaxLabel && (
+          <SvgText x={sx(maxX)} y={H - PAD_B + 18} fontSize={10} fill="#555" textAnchor="end">
+            {Math.round(maxX)}만km
+          </SvgText>
+        )}
       </Svg>
     </View>
   );
