@@ -44,6 +44,7 @@ import {
 } from "react-native-safe-area-context";
 import CarEvaluationDamageChecker from "../components/CarEvaluationDamageChecker";
 import PhotoAnnotator from "../components/PhotoAnnotator";
+import PriceChart from "../components/PriceChart";
 
 // ─── 상수 ─────────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get("window");
@@ -2677,7 +2678,12 @@ export default function CarEvaluationSheet() {
                             비교할 매물을 찾지 못했어요.
                           </Text>
                         ) : (
-                          specListings.map((l) => (
+                          <>
+                            <PriceChart
+                              listings={specListings}
+                              targetMileage={parseInt(mileage.replace(/,/g, ""), 10) || undefined}
+                            />
+                            {specListings.map((l) => (
                             <View
                               key={l.id}
                               style={{
@@ -2702,7 +2708,8 @@ export default function CarEvaluationSheet() {
                                 {l.priceManwon?.toLocaleString()}만원
                               </Text>
                             </View>
-                          ))
+                            ))}
+                          </>
                         )}
                       </ScrollView>
                     </>
