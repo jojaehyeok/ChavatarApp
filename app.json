@@ -77,7 +77,7 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "위치 정보를 실시간으로 전송하기 위해 위치 접근 권한이 필요합니다."
+          "locationAlwaysAndWhenInUsePermission": "진단사님의 현재 위치를 카비오 관리자에게 실시간으로 전달해, 방문 예정인 차량 진단 요청 중 가장 가까운 건을 자동으로 배정하는 데 사용합니다. 예를 들어, 이동 중에도 위치가 갱신되어 근처에 새 진단 요청이 들어오면 우선적으로 배정받을 수 있습니다."
         }
       ],
       [
