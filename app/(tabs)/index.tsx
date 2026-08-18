@@ -48,6 +48,9 @@ const NOTIFICATION_SOUND = 'carvior_premium_beer_ad_notification';
 // 서로 다른 상황이라 알림음도 구분되게 별도 채널로 분리 — 백엔드 sendPush의 channelId와 매칭됨.
 const NOTIFICATION_CHANNEL_AUTO_ASSIGNED = 'cavior-auto-assigned';
 const NOTIFICATION_CHANNEL_NEW_REQUEST = 'cavior-new-request';
+// 이미 배정된 건을 관리자가 나중에 고쳤을 때(고객번호 추가/관리자메모 변경) 오는 "확인해주세요"
+// 알림 전용 채널 — 백엔드 bookings.service.ts의 PUSH_CHANNEL_BOOKING_UPDATED와 매칭됨.
+const NOTIFICATION_CHANNEL_BOOKING_UPDATED = 'cavior-booking-updated';
 
 if (!IS_EXPO_GO) {
   Notifications?.setNotificationHandler({
@@ -74,6 +77,11 @@ if (!IS_EXPO_GO) {
       name: '카비어 신규 요청',
       importance: Notifications.AndroidImportance.HIGH,
       sound: 'carvior_new_request',
+    });
+    Notifications?.setNotificationChannelAsync(NOTIFICATION_CHANNEL_BOOKING_UPDATED, {
+      name: '카비어 예약 정보 수정',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'carvior_booking_updated',
     });
   }
 }
