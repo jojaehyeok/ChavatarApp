@@ -434,7 +434,7 @@ export default function CarEvaluationSheet() {
       : null,
   );
   const [specListings, setSpecListings] = useState<
-    { id: string; model: string; badge: string; year: string; mileage: number; fuel: string; priceManwon: number }[]
+    { id: string; model: string; badge: string; year: string; mileage: number; fuel: string; priceManwon: number; thumbnailUrl: string | null }[]
   >([]);
 
   const fetchSpecListings = async (m: { manufacturer: string; model: string; badge: string }) => {
@@ -2763,6 +2763,14 @@ export default function CarEvaluationSheet() {
                                 borderBottomColor: "#1a1a1a",
                               }}
                             >
+                              {l.thumbnailUrl ? (
+                                <Image
+                                  source={{ uri: l.thumbnailUrl }}
+                                  style={{ width: 64, height: 48, borderRadius: 8, marginRight: 12, backgroundColor: "#1a1a1a" }}
+                                />
+                              ) : (
+                                <View style={{ width: 64, height: 48, borderRadius: 8, marginRight: 12, backgroundColor: "#1a1a1a" }} />
+                              )}
                               <View style={{ flex: 1 }}>
                                 <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }} numberOfLines={1}>
                                   {l.badge}
