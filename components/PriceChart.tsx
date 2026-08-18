@@ -170,10 +170,11 @@ export default function PriceChart({
         </Svg>
 
         {xLabels.map((l, i) => {
-          const estWidth = l.text.length * (l.bold ? 8 : 7);
+          const estWidth = l.text.length * (l.bold ? 10 : 9);
           return (
             <Text
               key={i}
+              numberOfLines={1}
               style={{
                 position: "absolute",
                 left: l.cx - estWidth / 2,
