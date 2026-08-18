@@ -403,6 +403,55 @@ export default function CarEvaluationSheet() {
   const [carEditNumber, setCarEditNumber] = useState("");
   const [carEditOwner, setCarEditOwner] = useState("");
   const [carEditModel, setCarEditModel] = useState("");
+
+  // "상세정보"(제원/시세, EnCarAPI 연동) — 차종명으로 검색 → 등급 선택 → 실거래 비교매물
+  const [specModalVisible, setSpecModalVisible] = useState(false);
+  const [specStep, setSpecStep] = useState<"search" | "listings">("search");
+  const [specLoading, setSpecLoading] = useState(false);
+  const [specMatches, setSpecMatches] = useState<
+    { manufacturer: string; model: string; badge: string; count: number }[]
+  >([]);
+  const [specSelected, setSpecSelected] = useState<{ manufacturer: string; model: string; badge: string } | null>(null);
+  const [specListings, setSpecListings] = useState<
+    { id: string; model: string; badge: string; year: string; mileage: number; fuel: string; priceManwon: number }[]
+  >([]);
+
+  const openSpecModal = async () => {
+    if (!carModel?.trim()) {
+      showAlert("알림", "차종을 먼저 입력해주세요.");
+      return;
+    }
+    setSpecModalVisible(true);
+    setSpecStep("search");
+    setSpecLoading(true);
+    setSpecMatches([]);
+    try {
+      const res = await fetch(`${API_BASE_URL}/external/car-spec/search?q=${encodeURIComponent(carModel.trim())}`);
+      const data = await res.json();
+      setSpecMatches(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // 조회 실패해도 진단 자체엔 영향 없게 조용히 빈 목록으로 둠
+    } finally {
+      setSpecLoading(false);
+    }
+  };
+
+  const selectSpecMatch = async (m: { manufacturer: string; model: string; badge: string }) => {
+    setSpecSelected(m);
+    setSpecStep("listings");
+    setSpecLoading(true);
+    setSpecListings([]);
+    try {
+      const qs = `manufacturer=${encodeURIComponent(m.manufacturer)}&model=${encodeURIComponent(m.model)}&badge=${encodeURIComponent(m.badge)}`;
+      const res = await fetch(`${API_BASE_URL}/external/car-spec/listings?${qs}`);
+      const data = await res.json();
+      setSpecListings(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // 무시 — 아래 빈 상태 문구로 대체
+    } finally {
+      setSpecLoading(false);
+    }
+  };
   const [savingCarInfo, setSavingCarInfo] = useState(false);
 
   // serviceType: 'INSPECTION_DELIVERY' | 'EVALUATION_DELIVERY'
@@ -2489,10 +2538,10 @@ export default function CarEvaluationSheet() {
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity
-                  disabled
-                  style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#222" }}
+                  onPress={openSpecModal}
+                  style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: "#333" }}
                 >
-                  <Text style={{ color: "#666", fontSize: 12, fontWeight: "700" }}>상세정보</Text>
+                  <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>상세정보</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -2556,6 +2605,109 @@ export default function CarEvaluationSheet() {
                   </Pressable>
                 </Pressable>
                 </KeyboardAvoidingView>
+              </Modal>
+            )}
+
+            {specModalVisible && (
+              <Modal animationType="slide" onRequestClose={() => setSpecModalVisible(false)}>
+                <SafeAreaView style={{ flex: 1, backgroundColor: "#000" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16 }}>
+                    {specStep === "listings" ? (
+                      <TouchableOpacity onPress={() => setSpecStep("search")} style={{ padding: 4 }}>
+                        <Ionicons name="chevron-back" size={26} color="#fff" />
+                      </TouchableOpacity>
+                    ) : <View style={{ width: 34 }} />}
+                    <TouchableOpacity onPress={() => setSpecModalVisible(false)} style={{ padding: 4 }}>
+                      <Ionicons name="close" size={26} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+
+                  {specStep === "search" ? (
+                    <>
+                      <Text style={{ color: "#fff", fontSize: 24, fontWeight: "bold", paddingHorizontal: 20, lineHeight: 32 }}>
+                        {carModel} 차량의{"\n"}등급을 선택해 주세요
+                      </Text>
+                      <ScrollView style={{ marginTop: 24 }}>
+                        {specLoading ? (
+                          <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
+                        ) : specMatches.length === 0 ? (
+                          <Text style={{ color: "#666", textAlign: "center", marginTop: 40 }}>
+                            일치하는 차종을 찾지 못했어요.
+                          </Text>
+                        ) : (
+                          specMatches.map((m, i) => (
+                            <TouchableOpacity
+                              key={i}
+                              onPress={() => selectSpecMatch(m)}
+                              style={{
+                                flexDirection: "row",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                paddingHorizontal: 20,
+                                paddingVertical: 18,
+                                borderBottomWidth: 1,
+                                borderBottomColor: "#1a1a1a",
+                              }}
+                            >
+                              <View>
+                                <Text style={{ color: "#fff", fontSize: 16, fontWeight: "700" }}>
+                                  {m.manufacturer} {m.model}
+                                </Text>
+                                <Text style={{ color: "#888", fontSize: 13, marginTop: 4 }}>{m.badge}</Text>
+                              </View>
+                              <Text style={{ color: "#555", fontSize: 12 }}>매물 {m.count}건 ›</Text>
+                            </TouchableOpacity>
+                          ))
+                        )}
+                      </ScrollView>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={{ color: "#fff", fontSize: 20, fontWeight: "bold", paddingHorizontal: 20 }}>
+                        {specSelected?.manufacturer} {specSelected?.model}
+                      </Text>
+                      <Text style={{ color: "#888", fontSize: 13, paddingHorizontal: 20, marginTop: 4 }}>
+                        {specSelected?.badge} · 실거래 비교매물
+                      </Text>
+                      <ScrollView style={{ marginTop: 20 }}>
+                        {specLoading ? (
+                          <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
+                        ) : specListings.length === 0 ? (
+                          <Text style={{ color: "#666", textAlign: "center", marginTop: 40 }}>
+                            비교할 매물을 찾지 못했어요.
+                          </Text>
+                        ) : (
+                          specListings.map((l) => (
+                            <View
+                              key={l.id}
+                              style={{
+                                flexDirection: "row",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                paddingHorizontal: 20,
+                                paddingVertical: 16,
+                                borderBottomWidth: 1,
+                                borderBottomColor: "#1a1a1a",
+                              }}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: "#fff", fontSize: 14, fontWeight: "600" }} numberOfLines={1}>
+                                  {l.badge}
+                                </Text>
+                                <Text style={{ color: "#888", fontSize: 12, marginTop: 4 }}>
+                                  {l.year}년식 · {l.mileage?.toLocaleString()}km · {l.fuel}
+                                </Text>
+                              </View>
+                              <Text style={{ color: "#fff", fontSize: 16, fontWeight: "800" }}>
+                                {l.priceManwon?.toLocaleString()}만원
+                              </Text>
+                            </View>
+                          ))
+                        )}
+                      </ScrollView>
+                    </>
+                  )}
+                </SafeAreaView>
               </Modal>
             )}
 
