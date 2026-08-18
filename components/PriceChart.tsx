@@ -40,10 +40,13 @@ export default function PriceChart({
   listings,
   targetMileage,
   subtitle,
+  depreciationPct,
 }: {
   listings: Listing[];
   targetMileage?: number;
   subtitle?: string;
+  // 사고감가율(%) — 진단사가 체크한 손상 부위 기준으로 계산된 값. agent 등급 데모 전용.
+  depreciationPct?: number;
 }) {
   const points = listings
     .filter((l) => l.mileage > 0 && l.priceManwon > 0)
@@ -92,6 +95,11 @@ export default function PriceChart({
     rangeHigh = Math.round((targetY + margin) / 10) * 10;
   }
 
+  const hasDepreciation = !!depreciationPct && depreciationPct > 0;
+  const depFactor = hasDepreciation ? 1 - depreciationPct! / 100 : 1;
+  const depRangeLow = Math.round((rangeLow * depFactor) / 10) * 10;
+  const depRangeHigh = Math.round((rangeHigh * depFactor) / 10) * 10;
+
   const yGrid = Array.from({ length: Math.round(maxY / yAxis.step) + 1 }, (_, i) => yAxis.step * i);
   const targetX = targetMileage != null ? targetMileage / 10000 : null;
   const targetSxVal = targetX != null ? sx(targetX) : null;
@@ -130,6 +138,27 @@ export default function PriceChart({
             {rangeLow.toLocaleString()} ~ {rangeHigh.toLocaleString()}
             <Text style={{ fontSize: 15, color: "#888", fontWeight: "700" }}> 만원</Text>
           </Text>
+          {hasDepreciation && (
+            <View
+              style={{
+                backgroundColor: "#1c1633",
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: "#7c3aed44",
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                marginBottom: 6,
+              }}
+            >
+              <Text style={{ color: "#a78bfa", fontSize: 11, fontWeight: "700", marginBottom: 2 }}>
+                사고감가 반영 (-{depreciationPct}%) · 데모
+              </Text>
+              <Text style={{ color: "#fff", fontSize: 18, fontWeight: "900" }}>
+                {depRangeLow.toLocaleString()} ~ {depRangeHigh.toLocaleString()}
+                <Text style={{ fontSize: 12, color: "#bbb", fontWeight: "700" }}> 만원</Text>
+              </Text>
+            </View>
+          )}
           {!!subtitle && (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#7c3aed" }} />

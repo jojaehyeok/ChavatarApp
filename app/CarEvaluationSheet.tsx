@@ -45,6 +45,7 @@ import {
 import CarEvaluationDamageChecker from "../components/CarEvaluationDamageChecker";
 import PhotoAnnotator from "../components/PhotoAnnotator";
 import PriceChart from "../components/PriceChart";
+import { computeDamageDepreciationPct } from "../constants/damageDepreciation";
 
 // ─── 상수 ─────────────────────────────────────────────────────────────────────
 const { width, height } = Dimensions.get("window");
@@ -511,6 +512,22 @@ export default function CarEvaluationSheet() {
     }).catch(() => {});
   };
   const [savingCarInfo, setSavingCarInfo] = useState(false);
+
+  // 사고감가 반영 시세(데모) — agent 등급 진단사에게만 노출
+  const [isAgentTier, setIsAgentTier] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const driverId = await AsyncStorage.getItem("driverId");
+      if (!driverId) return;
+      try {
+        const res = await fetch(`${API_BASE_URL}/drivers/${driverId}`);
+        const data = await res.json();
+        setIsAgentTier(data?.tier === "agent");
+      } catch (e) {
+        // 무시 — 기본값(false)으로 유지
+      }
+    })();
+  }, []);
 
   // serviceType: 'INSPECTION_DELIVERY' | 'EVALUATION_DELIVERY'
   const isInspection = serviceType === "INSPECTION_DELIVERY";
@@ -2749,6 +2766,7 @@ export default function CarEvaluationSheet() {
                               listings={specListings}
                               targetMileage={parseInt(mileage.replace(/,/g, ""), 10) || undefined}
                               subtitle={specSelected ? `${specSelected.manufacturer} ${specSelected.model} · ${specSelected.badge}` : undefined}
+                              depreciationPct={isAgentTier ? computeDamageDepreciationPct(checkedDamages) : undefined}
                             />
                             {specListings.map((l) => (
                             <View
