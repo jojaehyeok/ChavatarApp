@@ -1261,9 +1261,6 @@ export default function DiagnosisManagement() {
                     <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('confirm', 'customer')}><Ionicons name="checkmark-done-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>확정문자 보내기</Text></TouchableOpacity>
                   )}
                   <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms', 'dealer')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>딜러에게 문자 보내기</Text></TouchableOpacity>
-                  {selectedItem?.customerContact && (
-                    <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms', 'customer')}><Ionicons name="mail-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>차주에게 문자 보내기</Text></TouchableOpacity>
-                  )}
                   <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy', 'dealer')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
                 </>
               ) : (
