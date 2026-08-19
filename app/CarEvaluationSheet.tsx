@@ -435,6 +435,14 @@ function Counter({
             style={styles.counterValue}
             keyboardType="numeric"
             value={String(value)}
+            onFocus={() => {
+              // selectTextOnFocus는 리렌더될 때마다(=매 글자 입력마다) 다시 전체선택을 걸어서
+              // 다음 글자가 이전 글자를 덮어썼다. 대신 진짜 포커스 이벤트(탭해서 들어올 때) 한
+              // 번만 수동으로 전체선택해서, 기존 값 위에 이어붙는 게 아니라 새로 입력되게 한다.
+              if (allowTwoDigits) {
+                setTimeout(() => inputRef.current?.setSelection(0, String(value).length), 0);
+              }
+            }}
             onChangeText={(t) => {
               const cleaned = t.replace(/[^0-9]/g, "");
               const n = parseInt(cleaned) || 0;
