@@ -401,6 +401,7 @@ function Counter({
   onType,
   suffix,
   isViewMode,
+  allowTwoDigits,
 }: {
   label: string;
   value: number;
@@ -409,7 +410,13 @@ function Counter({
   onType: (n: number) => void;
   suffix?: string;
   isViewMode: boolean;
+  // 외판도색처럼 두 자리(예: 16)까지 입력해야 하는 카운터 전용.
+  // selectTextOnFocus가 리렌더마다 "전체선택"을 다시 걸어서 다음 글자가 이전 글자를 덮어쓰는
+  // 문제가 있어, 이 항목만 꺼서 정상적으로 이어 입력되게 하고 대신 두 자리 입력되면 자동으로
+  // 키보드를 닫아준다(휠스크래치/스마트키 등 한 자리면 충분한 항목은 기존 방식 그대로 유지).
+  allowTwoDigits?: boolean;
 }) {
+  const inputRef = useRef<TextInput>(null);
   return (
     <View style={styles.counterRow}>
       <Text style={styles.counterLabel}>{label}</Text>
@@ -424,14 +431,19 @@ function Counter({
           <Text style={styles.counterValue}>{value}</Text>
         ) : (
           <TextInput
+            ref={inputRef}
             style={styles.counterValue}
             keyboardType="numeric"
             value={String(value)}
             onChangeText={(t) => {
-              const n = parseInt(t.replace(/[^0-9]/g, "")) || 0;
+              const cleaned = t.replace(/[^0-9]/g, "");
+              const n = parseInt(cleaned) || 0;
               onType(n);
+              if (allowTwoDigits && cleaned.length >= 2) {
+                inputRef.current?.blur();
+              }
             }}
-            selectTextOnFocus
+            selectTextOnFocus={!allowTwoDigits}
           />
         )}
         {!isViewMode && (
@@ -3079,6 +3091,7 @@ export default function CarEvaluationSheet() {
                   onInc={() => setPaintNeeded(paintNeeded + 1)}
                   onType={setPaintNeeded}
                   isViewMode={isViewMode}
+                  allowTwoDigits
                 />
                 <View style={styles.thinDivider} />
                 <Counter
