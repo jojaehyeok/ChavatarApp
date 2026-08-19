@@ -1035,7 +1035,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.25</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.26</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1155,14 +1155,6 @@ export default function DiagnosisManagement() {
                         </TouchableOpacity>
                       )}
                     </View>
-                  </View>
-                )}
-                {activeTab === 'upcoming' && item.confirmMessageSentAt && (
-                  <View style={styles.infoRow}>
-                    <Text style={styles.label}>확정문자</Text>
-                    <Text style={styles.value}>
-                      {`${item.confirmMessageSentTo === 'dealer' ? '딜러' : '고객'} 발송 ${new Date(item.confirmMessageSentAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`}
-                    </Text>
                   </View>
                 )}
                 {activeTab === 'upcoming' && (
