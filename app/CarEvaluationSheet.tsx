@@ -401,7 +401,7 @@ function Counter({
   onType,
   suffix,
   isViewMode,
-  allowTwoDigits,
+  maxDigits = 1,
 }: {
   label: string;
   value: number;
@@ -410,11 +410,12 @@ function Counter({
   onType: (n: number) => void;
   suffix?: string;
   isViewMode: boolean;
-  // 외판도색처럼 두 자리(예: 16)까지 입력해야 하는 카운터 전용.
-  // selectTextOnFocus가 리렌더마다 "전체선택"을 다시 걸어서 다음 글자가 이전 글자를 덮어쓰는
-  // 문제가 있어, 이 항목만 꺼서 정상적으로 이어 입력되게 하고 대신 두 자리 입력되면 자동으로
-  // 키보드를 닫아준다(휠스크래치/스마트키 등 한 자리면 충분한 항목은 기존 방식 그대로 유지).
-  allowTwoDigits?: boolean;
+  // 이 자리수만큼 입력되면 자동으로 키보드를 닫는다. 대부분 한 자리(0~9)면 충분하고,
+  // 외판도색처럼 두 자리(0~99, 보통 20 이내)까지 필요한 항목만 2로 지정.
+  // selectTextOnFocus는 리렌더마다(=매 글자 입력마다) 전체선택을 다시 걸어서 다음 글자가
+  // 이전 글자를 덮어쓰는 버그가 있어 쓰지 않고, 진짜 포커스 이벤트 때 한 번만 수동으로
+  // 전체선택한다.
+  maxDigits?: number;
 }) {
   const inputRef = useRef<TextInput>(null);
   return (
@@ -436,22 +437,17 @@ function Counter({
             keyboardType="numeric"
             value={String(value)}
             onFocus={() => {
-              // selectTextOnFocus는 리렌더될 때마다(=매 글자 입력마다) 다시 전체선택을 걸어서
-              // 다음 글자가 이전 글자를 덮어썼다. 대신 진짜 포커스 이벤트(탭해서 들어올 때) 한
-              // 번만 수동으로 전체선택해서, 기존 값 위에 이어붙는 게 아니라 새로 입력되게 한다.
-              if (allowTwoDigits) {
-                setTimeout(() => inputRef.current?.setSelection(0, String(value).length), 0);
-              }
+              setTimeout(() => inputRef.current?.setSelection(0, String(value).length), 0);
             }}
             onChangeText={(t) => {
               const cleaned = t.replace(/[^0-9]/g, "");
               const n = parseInt(cleaned) || 0;
               onType(n);
-              if (allowTwoDigits && cleaned.length >= 2) {
+              if (cleaned.length >= maxDigits) {
                 inputRef.current?.blur();
               }
             }}
-            selectTextOnFocus={!allowTwoDigits}
+            selectTextOnFocus={false}
           />
         )}
         {!isViewMode && (
@@ -3099,7 +3095,7 @@ export default function CarEvaluationSheet() {
                   onInc={() => setPaintNeeded(paintNeeded + 1)}
                   onType={setPaintNeeded}
                   isViewMode={isViewMode}
-                  allowTwoDigits
+                  maxDigits={2}
                 />
                 <View style={styles.thinDivider} />
                 <Counter
