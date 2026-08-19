@@ -152,6 +152,8 @@ interface DiagnosisItem {
   carSpecManufacturer?: string;
   carSpecModel?: string;
   carSpecBadge?: string;
+  confirmMessageSentAt?: string | null;
+  confirmMessageSentTo?: 'customer' | 'dealer' | null;
   dealerName?: string | null;
   dealerContact?: string | null;
   listingUrl?: string | null;
@@ -513,6 +515,15 @@ export default function DiagnosisManagement() {
     }).catch(() => {});
   }, [currentDriverId]);
 
+  // 확정문자를 고객/딜러 중 아무 쪽으로든 보내면 "진단 시작" 게이트가 풀리게, 로컬 상태도
+  // 바로 갱신해서 새로고침 없이 즉시 버튼이 활성화되게 한다.
+  const markConfirmMessageSent = useCallback((item: DiagnosisItem | null, target: 'customer' | 'dealer') => {
+    if (!item) return;
+    const sentAt = new Date().toISOString();
+    setAllData(prev => prev.map(d => String(d.id) === String(item.id) ? { ...d, confirmMessageSentAt: sentAt, confirmMessageSentTo: target } : d));
+    axios.patch(`${API_BASE_URL}/external/request/${item.id}/confirm-message-sent`, { target }).catch(() => {});
+  }, []);
+
   // "확정문자"용 — "2026-08-17 14:00"/"2026-08-17T14:00" 둘 다 받아서 "8월 17일 (월) 14:00"로.
   const formatConfirmSchedule = (dt?: string | null): string => {
     if (!dt) return '';
@@ -560,6 +571,7 @@ export default function DiagnosisManagement() {
     }
     setContactModalVisible(false);
     if (type === 'tel') markDriverSeen(selectedItem);
+    if (type === 'confirm') markConfirmMessageSent(selectedItem, target);
     try { await Linking.openURL(url); } catch { Alert.alert('오류', '연결할 수 없습니다.'); }
   };
 
@@ -893,8 +905,17 @@ export default function DiagnosisManagement() {
             <Text style={{ color: theme.textMain, fontWeight: 'bold' }}>길 찾기</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c' }]}
-            onPress={() => router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '', carSpecManufacturer: item.carSpecManufacturer || '', carSpecModel: item.carSpecModel || '', carSpecBadge: item.carSpecBadge || '' } })}
+            style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c', opacity: item.confirmMessageSentAt ? 1 : 0.4 }]}
+            onPress={() => {
+              if (!item.confirmMessageSentAt) {
+                Alert.alert('확정문자 필요', '진단을 시작하려면 먼저 고객 또는 딜러에게 확정문자를 보내주세요.', [
+                  { text: '취소', style: 'cancel' },
+                  { text: '연락하기', onPress: () => { setSelectedItem(item); setContactModalVisible(true); } },
+                ]);
+                return;
+              }
+              router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '', carSpecManufacturer: item.carSpecManufacturer || '', carSpecModel: item.carSpecModel || '', carSpecBadge: item.carSpecBadge || '' } });
+            }}
           >
             <Text style={{ color: isDark ? '#000' : '#fff', fontWeight: 'bold' }}>진단 시작</Text>
           </TouchableOpacity>
@@ -1016,7 +1037,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.23</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.24</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1136,6 +1157,16 @@ export default function DiagnosisManagement() {
                         </TouchableOpacity>
                       )}
                     </View>
+                  </View>
+                )}
+                {activeTab === 'upcoming' && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.label}>확정문자</Text>
+                    <Text style={[styles.value, { color: item.confirmMessageSentAt ? theme.textMain : '#F5A623' }]}>
+                      {item.confirmMessageSentAt
+                        ? `${item.confirmMessageSentTo === 'dealer' ? '딜러' : '고객'} 발송 ${new Date(item.confirmMessageSentAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`
+                        : '미발송'}
+                    </Text>
                   </View>
                 )}
                 {activeTab === 'upcoming' && (
@@ -1263,6 +1294,7 @@ export default function DiagnosisManagement() {
                   {selectedItem?.customerContact && (
                     <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('confirm', 'customer')}><Ionicons name="checkmark-done-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>확정문자 보내기</Text></TouchableOpacity>
                   )}
+                  <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('confirm', 'dealer')}><Ionicons name="checkmark-done" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>딜러에게 확정문자 보내기</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.contactOption} onPress={() => handleContact('sms', 'dealer')}><Ionicons name="mail" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>딜러에게 문자 보내기</Text></TouchableOpacity>
                   <TouchableOpacity style={[styles.contactOption, { borderBottomWidth: 0 }]} onPress={() => handleContact('copy', 'dealer')}><Ionicons name="copy-outline" size={22} color={theme.accent} /><Text style={[styles.contactOptionText, { color: theme.textMain }]}>번호 복사</Text></TouchableOpacity>
                 </>
