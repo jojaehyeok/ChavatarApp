@@ -515,8 +515,8 @@ export default function DiagnosisManagement() {
     }).catch(() => {});
   }, [currentDriverId]);
 
-  // 확정문자를 고객/딜러 중 아무 쪽으로든 보내면 "진단 시작" 게이트가 풀리게, 로컬 상태도
-  // 바로 갱신해서 새로고침 없이 즉시 버튼이 활성화되게 한다.
+  // 확정문자를 고객/딜러 중 아무 쪽으로든 보내면 "진단 시작" 게이트가 풀리고, 대시보드
+  // "진단사 확인" 표시도 같이 갱신되게 — 로컬 상태도 바로 갱신해서 새로고침 없이 반영.
   const markConfirmMessageSent = useCallback((item: DiagnosisItem | null, target: 'customer' | 'dealer') => {
     if (!item) return;
     const sentAt = new Date().toISOString();
@@ -534,8 +534,9 @@ export default function DiagnosisManagement() {
     return `${m}월 ${d}일 (${dayLabel}) ${timePart || ''}`.trim();
   };
 
-  const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy', target: 'dealer' | 'customer' = 'dealer') => {
-    const rawContact = target === 'customer' ? selectedItem?.customerContact : selectedItem?.contact;
+  const handleContact = async (type: 'tel' | 'sms' | 'confirm' | 'copy', target: 'dealer' | 'customer' = 'dealer', overrideItem?: DiagnosisItem) => {
+    const contactItem = overrideItem ?? selectedItem;
+    const rawContact = target === 'customer' ? contactItem?.customerContact : contactItem?.contact;
     if (!rawContact) {
       Alert.alert('오류', target === 'customer' ? '차주 연락처가 없습니다. 고객번호 수정에서 먼저 입력해주세요.' : '연락처 정보가 없습니다.');
       return;
@@ -548,8 +549,8 @@ export default function DiagnosisManagement() {
     const phone = rawContact.replace(/[^0-9]/g, '');
     let url = type === 'tel' ? `tel:${phone}` : `sms:${phone}`;
     if (type === 'confirm') {
-      const schedule = formatConfirmSchedule(selectedItem?.preferredDateTime);
-      const addressLine = `${selectedItem?.address ?? ''}${selectedItem?.detailAddress ? ` ${selectedItem.detailAddress}` : ''}`;
+      const schedule = formatConfirmSchedule(contactItem?.preferredDateTime);
+      const addressLine = `${contactItem?.address ?? ''}${contactItem?.detailAddress ? ` ${contactItem.detailAddress}` : ''}`;
       const message = [
         `안녕하세요. 카비어 진단평가사 ${currentDriverName}입니다.`,
         `검차서비스를 신청해 주셔서 감사합니다.`,
@@ -570,8 +571,8 @@ export default function DiagnosisManagement() {
       url += `${Platform.OS === 'ios' ? '&' : '?'}body=${encodeURIComponent(message)}`;
     }
     setContactModalVisible(false);
-    if (type === 'tel') markDriverSeen(selectedItem);
-    if (type === 'confirm') markConfirmMessageSent(selectedItem, target);
+    if (type === 'tel' || type === 'confirm') markDriverSeen(contactItem);
+    if (type === 'confirm') markConfirmMessageSent(contactItem, target);
     try { await Linking.openURL(url); } catch { Alert.alert('오류', '연결할 수 없습니다.'); }
   };
 
@@ -908,10 +909,7 @@ export default function DiagnosisManagement() {
             style={[styles.subCardBtn, { backgroundColor: isDark ? '#fff' : '#2c313c', opacity: item.confirmMessageSentAt ? 1 : 0.4 }]}
             onPress={() => {
               if (!item.confirmMessageSentAt) {
-                Alert.alert('확정문자 필요', '진단을 시작하려면 먼저 고객 또는 딜러에게 확정문자를 보내주세요.', [
-                  { text: '취소', style: 'cancel' },
-                  { text: '연락하기', onPress: () => { setSelectedItem(item); setContactModalVisible(true); } },
-                ]);
+                handleContact('confirm', item.customerContact ? 'customer' : 'dealer', item);
                 return;
               }
               router.push({ pathname: '/CarEvaluationSheet', params: { requestId: item.id, carNumber: item.carNumber, carModel: item.carModel || '', serviceType: item.serviceType || '', isExportBooking: item.isExportBooking ? '1' : '', listingUrl: item.listingUrl || '', carSpecManufacturer: item.carSpecManufacturer || '', carSpecModel: item.carSpecModel || '', carSpecBadge: item.carSpecBadge || '' } });
@@ -1159,13 +1157,11 @@ export default function DiagnosisManagement() {
                     </View>
                   </View>
                 )}
-                {activeTab === 'upcoming' && (
+                {activeTab === 'upcoming' && item.confirmMessageSentAt && (
                   <View style={styles.infoRow}>
                     <Text style={styles.label}>확정문자</Text>
-                    <Text style={[styles.value, { color: item.confirmMessageSentAt ? theme.textMain : '#F5A623' }]}>
-                      {item.confirmMessageSentAt
-                        ? `${item.confirmMessageSentTo === 'dealer' ? '딜러' : '고객'} 발송 ${new Date(item.confirmMessageSentAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`
-                        : '미발송'}
+                    <Text style={styles.value}>
+                      {`${item.confirmMessageSentTo === 'dealer' ? '딜러' : '고객'} 발송 ${new Date(item.confirmMessageSentAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}`}
                     </Text>
                   </View>
                 )}
