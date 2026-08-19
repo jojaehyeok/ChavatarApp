@@ -390,6 +390,61 @@ function IssueVideoRecorderModal({
   );
 }
 
+// 컴포넌트 본문 안에서 정의하면 렌더될 때마다 새 함수(=새 컴포넌트 타입)로 취급돼서, 한 글자만
+// 입력해도 리렌더 → Counter가 통째로 리마운트 → TextInput이 포커스를 잃어 키보드가 닫혔다
+// (외판도색 두자리 입력이 안 되던 원인). 모듈 최상단으로 빼서 컴포넌트 정체성을 고정한다.
+function Counter({
+  label,
+  value,
+  onDec,
+  onInc,
+  onType,
+  suffix,
+  isViewMode,
+}: {
+  label: string;
+  value: number;
+  onDec: () => void;
+  onInc: () => void;
+  onType: (n: number) => void;
+  suffix?: string;
+  isViewMode: boolean;
+}) {
+  return (
+    <View style={styles.counterRow}>
+      <Text style={styles.counterLabel}>{label}</Text>
+      <View style={styles.counterControls}>
+        {suffix && <Text style={styles.unitSmall}>총</Text>}
+        {!isViewMode && (
+          <TouchableOpacity onPress={onDec} style={styles.counterBtn}>
+            <Text style={styles.counterBtnText}>−</Text>
+          </TouchableOpacity>
+        )}
+        {isViewMode ? (
+          <Text style={styles.counterValue}>{value}</Text>
+        ) : (
+          <TextInput
+            style={styles.counterValue}
+            keyboardType="numeric"
+            value={String(value)}
+            onChangeText={(t) => {
+              const n = parseInt(t.replace(/[^0-9]/g, "")) || 0;
+              onType(n);
+            }}
+            selectTextOnFocus
+          />
+        )}
+        {!isViewMode && (
+          <TouchableOpacity onPress={onInc} style={styles.counterBtn}>
+            <Text style={styles.counterBtnText}>+</Text>
+          </TouchableOpacity>
+        )}
+        {suffix && <Text style={styles.unitSmall}>{suffix}</Text>}
+      </View>
+    </View>
+  );
+}
+
 // ─── 컴포넌트 ──────────────────────────────────────────────────────────────────
 export default function CarEvaluationSheet() {
   const {
@@ -457,7 +512,9 @@ export default function CarEvaluationSheet() {
     return Array.isArray(data) ? data : [];
   };
 
-  // 외판도색/휠/스마트키/타이어/실내크리닝/유리·라이트 실비 차감 총액(만원) — agent 등급 전용.
+  // 외판도색/휠/스마트키/타이어 실비 차감 총액(만원) — agent 등급 전용.
+  // 실내크리닝/유리·라이트는 발생 빈도가 낮고 케이스마다 편차가 커서 항목화하지 않고
+  // 진단사메모(기타의견)에 자유 기술하는 방식으로 남긴다 — 별도 카운터 없음.
   const getFlatDeductionWon = () => {
     if (!isAgentTier) return 0;
     return computeFlatRepairDeduction({
@@ -467,8 +524,6 @@ export default function CarEvaluationSheet() {
       smartKeyCount: smartKey,
       frontTirePct: frontTire,
       backTirePct: backTire,
-      interiorCleaning,
-      glassLightDamage,
     }).totalWon;
   };
 
@@ -634,9 +689,6 @@ export default function CarEvaluationSheet() {
   const [wheelScratch, setWheelScratch] = useState(0);
   const [frontTire, setFrontTire] = useState(50);
   const [backTire, setBackTire] = useState(50);
-  // 매입가 참고용 실비 산정에 쓰는 항목 — 위 외판도색/휠스크래치와 같은 카운터 방식
-  const [interiorCleaning, setInteriorCleaning] = useState(0);
-  const [glassLightDamage, setGlassLightDamage] = useState(0);
 
   // ── 체크박스 항목 ─────────────────────────────────────────────────────────
   const [showWarning, setShowWarning] = useState(false);
@@ -1034,8 +1086,6 @@ export default function CarEvaluationSheet() {
       // 외관 수치
       setPaintNeeded(d.car_status?.paintNeeded ?? 0);
       setWheelScratch(d.car_status?.wheelScratch ?? 0);
-      setInteriorCleaning(d.car_status?.interiorCleaning ?? 0);
-      setGlassLightDamage(d.car_status?.glassLightDamage ?? 0);
       setFrontTire(d.car_status?.tireTread?.front ?? 50);
       setBackTire(d.car_status?.tireTread?.back ?? 50);
 
@@ -1132,8 +1182,6 @@ export default function CarEvaluationSheet() {
     specialKey,
     paintNeeded,
     wheelScratch,
-    interiorCleaning,
-    glassLightDamage,
     frontTire,
     backTire,
     showWarning,
@@ -1169,8 +1217,6 @@ export default function CarEvaluationSheet() {
         specialKey,
         paintNeeded,
         wheelScratch,
-        interiorCleaning,
-        glassLightDamage,
         frontTire,
         backTire,
         showWarning,
@@ -1227,8 +1273,6 @@ export default function CarEvaluationSheet() {
         setSpecialKey(p.specialKey || 0);
         setPaintNeeded(p.paintNeeded || 0);
         setWheelScratch(p.wheelScratch || 0);
-        setInteriorCleaning(p.interiorCleaning || 0);
-        setGlassLightDamage(p.glassLightDamage || 0);
         setFrontTire(p.frontTire ?? 50);
         setBackTire(p.backTire ?? 50);
         setShowWarning(p.showWarning || false);
@@ -1592,8 +1636,6 @@ export default function CarEvaluationSheet() {
         // 외관 수치
         paintNeeded,
         wheelScratch,
-        interiorCleaning,
-        glassLightDamage,
         frontTire,
         backTire,
         // 카테고리 사진
@@ -1652,8 +1694,6 @@ export default function CarEvaluationSheet() {
             smartKeyCount: smartKey,
             frontTirePct: frontTire,
             backTirePct: backTire,
-            interiorCleaning,
-            glassLightDamage,
           }).totalWon;
           const estimate = computePriceEstimate(
             listings,
@@ -2075,54 +2115,6 @@ export default function CarEvaluationSheet() {
   };
 
   // ─── 카운터 컴포넌트 ──────────────────────────────────────────────────────
-  const Counter = ({
-    label,
-    value,
-    onDec,
-    onInc,
-    onType,
-    suffix,
-  }: {
-    label: string;
-    value: number;
-    onDec: () => void;
-    onInc: () => void;
-    onType: (n: number) => void;
-    suffix?: string;
-  }) => (
-    <View style={styles.counterRow}>
-      <Text style={styles.counterLabel}>{label}</Text>
-      <View style={styles.counterControls}>
-        {suffix && <Text style={styles.unitSmall}>총</Text>}
-        {!isViewMode && (
-          <TouchableOpacity onPress={onDec} style={styles.counterBtn}>
-            <Text style={styles.counterBtnText}>−</Text>
-          </TouchableOpacity>
-        )}
-        {isViewMode ? (
-          <Text style={styles.counterValue}>{value}</Text>
-        ) : (
-          <TextInput
-            style={styles.counterValue}
-            keyboardType="numeric"
-            value={String(value)}
-            onChangeText={(t) => {
-              const n = parseInt(t.replace(/[^0-9]/g, "")) || 0;
-              onType(n);
-            }}
-            selectTextOnFocus
-          />
-        )}
-        {!isViewMode && (
-          <TouchableOpacity onPress={onInc} style={styles.counterBtn}>
-            <Text style={styles.counterBtnText}>+</Text>
-          </TouchableOpacity>
-        )}
-        {suffix && <Text style={styles.unitSmall}>{suffix}</Text>}
-      </View>
-    </View>
-  );
-
   // ─── 단일 이미지 슬롯 ────────────────────────────────────────────────────
   const SingleImageSlot = ({
     uri,
@@ -3042,6 +3034,7 @@ export default function CarEvaluationSheet() {
                   onDec={() => smartKey > 0 && setSmartKey(smartKey - 1)}
                   onInc={() => setSmartKey(smartKey + 1)}
                   onType={setSmartKey}
+                  isViewMode={isViewMode}
                 />
                 <View style={styles.thinDivider} />
                 <Counter
@@ -3050,6 +3043,7 @@ export default function CarEvaluationSheet() {
                   onDec={() => foldingKey > 0 && setFoldingKey(foldingKey - 1)}
                   onInc={() => setFoldingKey(foldingKey + 1)}
                   onType={setFoldingKey}
+                  isViewMode={isViewMode}
                 />
                 <View style={styles.thinDivider} />
                 <Counter
@@ -3058,6 +3052,7 @@ export default function CarEvaluationSheet() {
                   onDec={() => generalKey > 0 && setGeneralKey(generalKey - 1)}
                   onInc={() => setGeneralKey(generalKey + 1)}
                   onType={setGeneralKey}
+                  isViewMode={isViewMode}
                 />
                 <View style={styles.thinDivider} />
                 <Counter
@@ -3066,6 +3061,7 @@ export default function CarEvaluationSheet() {
                   onDec={() => specialKey > 0 && setSpecialKey(specialKey - 1)}
                   onInc={() => setSpecialKey(specialKey + 1)}
                   onType={setSpecialKey}
+                  isViewMode={isViewMode}
                 />
               </View>
             </View>
@@ -3082,6 +3078,7 @@ export default function CarEvaluationSheet() {
                   }
                   onInc={() => setPaintNeeded(paintNeeded + 1)}
                   onType={setPaintNeeded}
+                  isViewMode={isViewMode}
                 />
                 <View style={styles.thinDivider} />
                 <Counter
@@ -3093,28 +3090,7 @@ export default function CarEvaluationSheet() {
                   }
                   onInc={() => setWheelScratch(wheelScratch + 1)}
                   onType={setWheelScratch}
-                />
-                <View style={styles.thinDivider} />
-                <Counter
-                  label="실내크리닝/복원 필요"
-                  value={interiorCleaning}
-                  suffix="회"
-                  onDec={() =>
-                    interiorCleaning > 0 && setInteriorCleaning(interiorCleaning - 1)
-                  }
-                  onInc={() => setInteriorCleaning(interiorCleaning + 1)}
-                  onType={setInteriorCleaning}
-                />
-                <View style={styles.thinDivider} />
-                <Counter
-                  label="유리/라이트 손상"
-                  value={glassLightDamage}
-                  suffix="건"
-                  onDec={() =>
-                    glassLightDamage > 0 && setGlassLightDamage(glassLightDamage - 1)
-                  }
-                  onInc={() => setGlassLightDamage(glassLightDamage + 1)}
-                  onType={setGlassLightDamage}
+                  isViewMode={isViewMode}
                 />
               </View>
             </View>
