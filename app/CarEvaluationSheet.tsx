@@ -89,6 +89,60 @@ const _G = {
 
 const _sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// iOS에서 MediaLibrary.getAssetsAsync()가 주는 asset.uri는 실제 파일 경로가 아니라
+// "ph://<id>" 형태의 포토스 프레임워크 식별자라, RN Image로 못 그리고(썸네일이 검게 보임)
+// fetch/FormData로도 못 읽는다(업로드가 계속 "업로드중"에 멈추다 실패). getAssetInfoAsync로
+// 실제 로컬 파일(file://) 경로를 받아와야 한다. 안드로이드는 asset.uri가 이미 쓸 수 있는
+// 경로라 그대로 둔다.
+const _localUriCache = new Map<string, string>();
+const resolveLocalUri = async (asset: MediaLibrary.Asset): Promise<string> => {
+  if (Platform.OS !== "ios") return asset.uri;
+  const cached = _localUriCache.get(asset.id);
+  if (cached) return cached;
+  try {
+    const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+    const resolved = info.localUri || asset.uri;
+    _localUriCache.set(asset.id, resolved);
+    return resolved;
+  } catch (_e) {
+    return asset.uri;
+  }
+};
+
+function PickerGridThumb({
+  asset,
+  annotatedUri,
+  style,
+}: {
+  asset: MediaLibrary.Asset;
+  annotatedUri?: string;
+  style: any;
+}) {
+  const [uri, setUri] = useState<string | null>(
+    annotatedUri ?? (Platform.OS === "ios" ? _localUriCache.get(asset.id) ?? null : asset.uri),
+  );
+  useEffect(() => {
+    if (annotatedUri) {
+      setUri(annotatedUri);
+      return;
+    }
+    if (uri) return;
+    let cancelled = false;
+    resolveLocalUri(asset).then((resolved) => {
+      if (!cancelled) setUri(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset.id, annotatedUri]);
+
+  if (!uri) {
+    return <View style={[style, { backgroundColor: "#1c1c1e" }]} />;
+  }
+  return <Image source={{ uri }} style={style} />;
+}
+
 // 실측(50장): 병렬 5개는 19.3초·순서역전 12회, 싱글 I/O는 46.5초·역전 0회였는데,
 // 역전의 진짜 원인은 동시성 자체가 아니라 flushResults가 완료된 사진을 "끝에 추가"하던
 // 방식이었음 — 선택 시점에 이미 놓인 자리에 그대로 바꿔치기하도록 고쳐서 병렬로도 순서가
@@ -1840,43 +1894,50 @@ export default function CarEvaluationSheet() {
       .map((id) => assetById.get(id))
       .filter((a): a is MediaLibrary.Asset => !!a);
     const categorySnapshot = pickerCategoryId;
-    // 꾹 눌러서 표시(도형/펜/블러)한 사진은 원본 대신 편집된 버전을 올린다
-    const uris = selectedList.map((a) => annotatedUris[a.id] ?? a.uri);
-
-    console.log('[Picker] 확인:', categorySnapshot, uris.length, '장', uris[0]?.slice(0, 60));
 
     setPickerVisible(false);
     setPickerSelected(new Set());
 
-    if (uris.length === 0) return;
+    if (selectedList.length === 0) return;
 
-    if (SINGLE_IMG_CATS.includes(categorySnapshot)) {
-      const uri = uris[0];
-      console.log('[Picker] 단일 이미지 설정:', categorySnapshot, uri?.slice(0, 60));
-      if (categorySnapshot === "dashboard") setDashboardImage(uri);
-      else if (categorySnapshot === "registration") setRegImage(uri);
-      else if (categorySnapshot === "vin") setVinImage(uri);
-      enqueueUpload(uri, categorySnapshot);
-    } else if (categorySnapshot === "exterior") {
-      // 풀(기본 사진)의 단일 "사진추가" 버튼은 항상 "exterior"로 들어온다 —
-      // 실제 카테고리는 지금까지 쌓인 개수를 기준으로 순서대로 배정한다.
-      const assigned = assignPoolCategories(images, uris);
-      setImages((prev) => {
-        const next = { ...prev };
-        uris.forEach((uri, i) => {
-          const cat = assigned[i];
-          next[cat] = [...(next[cat] || []), uri];
+    (async () => {
+      // 꾹 눌러서 표시(도형/펜/블러)한 사진은 원본 대신 편집된 버전을 올리고,
+      // 그 외에는 iOS의 ph:// 식별자를 실제 파일 경로(file://)로 변환해야
+      // 화면 표시/업로드가 정상 동작한다(resolveLocalUri 참고).
+      const uris = await Promise.all(
+        selectedList.map((a) => annotatedUris[a.id] ?? resolveLocalUri(a)),
+      );
+
+      console.log('[Picker] 확인:', categorySnapshot, uris.length, '장', uris[0]?.slice(0, 60));
+
+      if (SINGLE_IMG_CATS.includes(categorySnapshot)) {
+        const uri = uris[0];
+        console.log('[Picker] 단일 이미지 설정:', categorySnapshot, uri?.slice(0, 60));
+        if (categorySnapshot === "dashboard") setDashboardImage(uri);
+        else if (categorySnapshot === "registration") setRegImage(uri);
+        else if (categorySnapshot === "vin") setVinImage(uri);
+        enqueueUpload(uri, categorySnapshot);
+      } else if (categorySnapshot === "exterior") {
+        // 풀(기본 사진)의 단일 "사진추가" 버튼은 항상 "exterior"로 들어온다 —
+        // 실제 카테고리는 지금까지 쌓인 개수를 기준으로 순서대로 배정한다.
+        const assigned = assignPoolCategories(images, uris);
+        setImages((prev) => {
+          const next = { ...prev };
+          uris.forEach((uri, i) => {
+            const cat = assigned[i];
+            next[cat] = [...(next[cat] || []), uri];
+          });
+          return next;
         });
-        return next;
-      });
-      uris.forEach((uri, i) => enqueueUpload(uri, assigned[i]));
-    } else {
-      setImages((prev) => ({
-        ...prev,
-        [categorySnapshot]: [...(prev[categorySnapshot] || []), ...uris],
-      }));
-      uris.forEach((uri) => enqueueUpload(uri, categorySnapshot));
-    }
+        uris.forEach((uri, i) => enqueueUpload(uri, assigned[i]));
+      } else {
+        setImages((prev) => ({
+          ...prev,
+          [categorySnapshot]: [...(prev[categorySnapshot] || []), ...uris],
+        }));
+        uris.forEach((uri) => enqueueUpload(uri, categorySnapshot));
+      }
+    })();
   };
 
   const pickerLaunchCamera = () => {
@@ -2593,8 +2654,9 @@ export default function CarEvaluationSheet() {
                     onLongPress={() => setAnnotatorTarget(item)}
                     style={styles.pickerThumbWrap}
                   >
-                    <Image
-                      source={{ uri: annotatedUris[item.id] ?? item.uri }}
+                    <PickerGridThumb
+                      asset={item}
+                      annotatedUri={annotatedUris[item.id]}
                       style={styles.pickerThumb}
                     />
                     {sel && <View style={styles.pickerThumbDim} />}
