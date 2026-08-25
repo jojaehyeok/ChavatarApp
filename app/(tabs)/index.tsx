@@ -311,10 +311,6 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
   );
 }
 
-// "자체" 소스(source가 "self-"로 시작) 건은 원래 앱에 안 보이지만, 외주로 특정 진단사한테만
-// 맡기기로 한 경우 여기 id를 추가하면 그 계정에서만 예외적으로 노출된다(안원용, 이우주).
-const OUTSOURCED_SELF_DRIVER_IDS = ['46', '47'];
-
 const CANCEL_REASONS = [
   { id: '진단사 사정', label: '진단사 사정' },
   {
@@ -370,6 +366,8 @@ export default function DiagnosisManagement() {
 
   const [currentDriverId, setCurrentDriverId] = useState<string | null>(null);
   const [currentDriverName, setCurrentDriverName] = useState<string | null>(null);
+  // 발주사 자체접수(외주) 건을 볼 수 있는 진단사인지 — 관리자가 대시보드에서 설정
+  const [canHandleOutsourced, setCanHandleOutsourced] = useState(false);
   // 근무시간(스케줄) 안이라도 원거리 이동 등으로 잠깐 자동배정·신규접수 알림에서 빠지고 싶을 때 끄는 스위치
   const [isActiveOn, setIsActiveOn] = useState(true);
   const [togglingActive, setTogglingActive] = useState(false);
@@ -476,6 +474,7 @@ export default function DiagnosisManagement() {
         if (typeof res.data?.isActive === 'boolean') setIsActiveOn(res.data.isActive);
         setIsAgentTier(res.data?.tier === 'agent');
         setDriverTier(res.data?.tier === 'certified' || res.data?.tier === 'agent' ? res.data.tier : 'general');
+        setCanHandleOutsourced(!!res.data?.canHandleOutsourced);
       })
       .catch(() => {});
   }, [currentDriverId]);
@@ -602,25 +601,26 @@ export default function DiagnosisManagement() {
     if (!currentDriverId) return;
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/external/request/list`);
+      // 자체 신청(source가 "self-"로 시작) 건은 백엔드가 기본적으로 목록에서 아예 걸러서
+      // 응답에 포함시키지 않는다 — 외주 처리 가능(canHandleOutsourced)한 진단사만
+      // includeSelf=true로 요청해서 받아온다(카드에 "외주물건" 배지를 붙여 구분).
+      const response = await axios.get(`${API_BASE_URL}/external/request/list`, {
+        params: canHandleOutsourced ? { includeSelf: true } : undefined,
+      });
       const fetched: DiagnosisItem[] = Array.isArray(response.data) ? response.data : response.data.data;
       if (!fetched) return;
-      // 자체 신청(source가 "self-"로 시작) 건은 원래 발주사가 직접 처리하는 건이라 앱에 안
-      // 보여주지만, 외주로 안원용·이우주 두 분한테만 맡기기로 해서 이 두 분 계정에서만 예외적으로
-      // 노출한다(카드에 "외주물건" 배지를 붙여서 다른 진단사 건과 구분되게 함).
-      const canSeeSelfBookings = OUTSOURCED_SELF_DRIVER_IDS.includes(String(currentDriverId));
-      setAllData(fetched.filter(item => !item.source?.startsWith('self-') || canSeeSelfBookings));
+      setAllData(fetched.filter(item => !item.source?.startsWith('self-') || canHandleOutsourced));
 
       // "예약 요청" 탭 뱃지용 카운트 — 지금 보고 있는 탭이 뭐든 상관없이 항상 최신으로 유지
       const canSeeRoundingForBadge = driverTier === 'certified' || driverTier === 'agent';
       const requestTabCount = fetched.filter(item => {
-        if (item.source?.startsWith('self-') && !canSeeSelfBookings) return false;
+        if (item.source?.startsWith('self-') && !canHandleOutsourced) return false;
         return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRoundingForBadge);
       }).length;
       setRequestCount(requestTabCount);
     } catch (error) { console.error(error); }
     finally { setLoading(false); setRefreshing(false); }
-  }, [currentDriverId, driverTier]);
+  }, [currentDriverId, driverTier, canHandleOutsourced]);
 
   // activeTab에 맞는 상태 필터 + 정렬 — 서버 재조회 없이 즉시 계산되므로 탭 전환이 순간적이다.
   const tabFilteredData = useMemo(() => {
@@ -1041,7 +1041,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.28</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.29</Text>
               </View>
             </Animated.View>
           </Pressable>
