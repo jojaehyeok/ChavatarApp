@@ -311,6 +311,10 @@ function DateFilterStrip({ filterDate, upcomingDates, onSelect, theme }: DateFil
   );
 }
 
+// "자체" 소스(source가 "self-"로 시작) 건은 원래 앱에 안 보이지만, 외주로 특정 진단사한테만
+// 맡기기로 한 경우 여기 id를 추가하면 그 계정에서만 예외적으로 노출된다(안원용, 이우주).
+const OUTSOURCED_SELF_DRIVER_IDS = ['46', '47'];
+
 const CANCEL_REASONS = [
   { id: '진단사 사정', label: '진단사 사정' },
   {
@@ -601,14 +605,16 @@ export default function DiagnosisManagement() {
       const response = await axios.get(`${API_BASE_URL}/external/request/list`);
       const fetched: DiagnosisItem[] = Array.isArray(response.data) ? response.data : response.data.data;
       if (!fetched) return;
-      // 자체 신청(source가 "self-"로 시작) 건은 발주사가 직접 처리하는 건이라
-      // 진단사가 방문할 필요가 없음 — 앱 어느 탭에도 노출하지 않음
-      setAllData(fetched.filter(item => !item.source?.startsWith('self-')));
+      // 자체 신청(source가 "self-"로 시작) 건은 원래 발주사가 직접 처리하는 건이라 앱에 안
+      // 보여주지만, 외주로 안원용·이우주 두 분한테만 맡기기로 해서 이 두 분 계정에서만 예외적으로
+      // 노출한다(카드에 "외주물건" 배지를 붙여서 다른 진단사 건과 구분되게 함).
+      const canSeeSelfBookings = OUTSOURCED_SELF_DRIVER_IDS.includes(String(currentDriverId));
+      setAllData(fetched.filter(item => !item.source?.startsWith('self-') || canSeeSelfBookings));
 
       // "예약 요청" 탭 뱃지용 카운트 — 지금 보고 있는 탭이 뭐든 상관없이 항상 최신으로 유지
       const canSeeRoundingForBadge = driverTier === 'certified' || driverTier === 'agent';
       const requestTabCount = fetched.filter(item => {
-        if (item.source?.startsWith('self-')) return false;
+        if (item.source?.startsWith('self-') && !canSeeSelfBookings) return false;
         return (item.status === 'PENDING' && item.depositConfirmed !== false) || (item.roundingRequested && canSeeRoundingForBadge);
       }).length;
       setRequestCount(requestTabCount);
@@ -1035,7 +1041,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.26</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.27</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1104,6 +1110,11 @@ export default function DiagnosisManagement() {
               {item.isExportBooking && (
                 <View style={styles.exportBadge}>
                   <Text style={styles.exportBadgeText}>🚢 수출건</Text>
+                </View>
+              )}
+              {item.source?.startsWith('self-') && (
+                <View style={styles.outsourcedBadge}>
+                  <Text style={styles.outsourcedBadgeText}>🤝 외주물건</Text>
                 </View>
               )}
               {activeTab === 'request' && item.remoteTier && (
@@ -1636,6 +1647,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
   },
   exportBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  outsourcedBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#475569', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  outsourcedBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
   remoteBadge: {
     alignSelf: 'flex-start', backgroundColor: '#dc2626', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
