@@ -72,7 +72,7 @@ const _G = {
   active: 0,
   submittedId: null as string | null,
   onResult: null as unknown as
-    | ((uri: string, url: string, cat: string) => void)
+    | ((uri: string, url: string, cat: string, requestId: string) => void)
     | undefined,
   onCount: null as unknown as ((n: number) => void) | undefined,
   onClassified: null as unknown as
@@ -177,7 +177,7 @@ const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
     const finalCat = task.categoryId;
 
     _G.completed.set(task.uri, { s3url, cat: finalCat, requestId: task.requestId });
-    _G.onResult?.(task.uri, s3url, finalCat);
+    _G.onResult?.(task.uri, s3url, finalCat, task.requestId);
     if (_G.submittedId === task.requestId) {
       fetch(`${API_BASE_URL}/external/inspection/${task.requestId}/photo`, {
         method: "PATCH",
@@ -951,7 +951,14 @@ export default function CarEvaluationSheet() {
     };
 
     // 컴포넌트 마운트: 콜백 등록
-    _G.onResult = (uri, s3url, cat) => {
+    _G.onResult = (uri, s3url, cat, taskRequestId) => {
+      // _G.onResult는 예약별로 나뉘지 않은 단일 전역 콜백 슬롯이다 — 예약 B에서 사진을 찍고
+      // (업로드가 아직 안 끝난 채로) 화면을 나가 예약 A를 열면, A가 이 슬롯을 재등록하는데
+      // 그 뒤 B의 업로드가 뒤늦게 끝나면 이 콜백이 그대로 실행돼 B의 사진이 A의 images에
+      // 섞여 들어가는 실사고가 있었다(다른 예약 사진이 내외판 데미지에 섞여 저장됨). 이
+      // 태스크가 지금 화면(requestId)의 것이 아니면 무시한다 — 이미 _G.completed에는
+      // 기록됐으니(179행) 그 예약 화면이 다시 열리면 reconcileWithBackgroundQueue가 반영한다.
+      if (String(taskRequestId) !== String(requestId)) return;
       // 계기판/등록증/보험이력(단일 슬롯)은 images 맵이 아니라 dashboardImage/regImage/vinImage
       // 별도 state를 쓰므로 배치 로직을 안 타고 바로 반영한다 — 그 사이 다른 사진으로
       // 교체됐으면(prev !== uri) 덮어쓰지 않는다.

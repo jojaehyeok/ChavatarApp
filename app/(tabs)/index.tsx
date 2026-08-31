@@ -622,6 +622,18 @@ export default function DiagnosisManagement() {
     finally { setLoading(false); setRefreshing(false); }
   }, [currentDriverId, driverTier, canHandleOutsourced]);
 
+  useEffect(() => {
+    if (!Notifications || !currentDriverId) return;
+    // 신규 접수 브로드캐스트 등 푸시가 도착하면 화면을 보고 있어도(탭 안 해도) 즉시
+    // 목록을 새로고침 — 예전엔 새 건이 와도 진단사가 직접 당겨서 새로고침해야만 보여서,
+    // 선착순 "내담당 확정" 경쟁에서 화면을 안 보고 있으면 무조건 불리했음.
+    let receivedSub: { remove: () => void } | null = null;
+    try {
+      receivedSub = Notifications.addNotificationReceivedListener(() => fetchData()) ?? null;
+    } catch (_e) {}
+    return () => { try { receivedSub?.remove(); } catch (_e) {} };
+  }, [currentDriverId, fetchData]);
+
   // activeTab에 맞는 상태 필터 + 정렬 — 서버 재조회 없이 즉시 계산되므로 탭 전환이 순간적이다.
   const tabFilteredData = useMemo(() => {
     const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
@@ -1041,7 +1053,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.29</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.30</Text>
               </View>
             </Animated.View>
           </Pressable>
