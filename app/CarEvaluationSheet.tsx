@@ -70,7 +70,12 @@ const SINGLE_SLOT_CATS = ['dashboard', 'registration', 'vin'];
 const _G = {
   queue: [] as _UploadTask[],
   active: 0,
-  submittedId: null as string | null,
+  // 제출이 끝난 예약 id들 — 제출 후에 뒤늦게 업로드가 끝난 사진을 서버 리포트에 덧붙일지
+  // 판단하는 데 쓴다. 예전엔 submittedId(마지막 하나)만 들고 있었는데, 그게 지워지지 않아
+  // "다음 차량 작업 중의 카테고리 수정"이 직전 차량 리포트로 날아가 남의 차 사진이 섞이는
+  // 실사고를 냈다(실측: 18개 리포트 219장). 이제 id 집합으로 들고 "지금 화면의 예약"에만
+  // 반영한다.
+  submittedIds: new Set<string>(),
   onResult: null as unknown as
     | ((uri: string, url: string, cat: string, requestId: string) => void)
     | undefined,
@@ -178,7 +183,7 @@ const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
 
     _G.completed.set(task.uri, { s3url, cat: finalCat, requestId: task.requestId });
     _G.onResult?.(task.uri, s3url, finalCat, task.requestId);
-    if (_G.submittedId === task.requestId) {
+    if (_G.submittedIds.has(task.requestId)) {
       fetch(`${API_BASE_URL}/external/inspection/${task.requestId}/photo`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1072,9 +1077,12 @@ export default function CarEvaluationSheet() {
         body: JSON.stringify({ imageUrl: uri, aiCategory: oldCatId, correctCategory: newCatId }),
       }).catch(() => {});
 
-      // 서버 사진 카테고리도 업데이트
-      if (_G.submittedId) {
-        fetch(`${API_BASE_URL}/external/inspection/${_G.submittedId}/photo`, {
+      // 서버 사진 카테고리도 업데이트 — 반드시 "지금 보고 있는 예약"으로 보낸다.
+      // 예전엔 _G.submittedId(마지막으로 제출한 예약 id)로 보냈는데, 그 값이 제출 후에도
+      // 안 지워져서 다음 차량 작업 중에 카테고리를 고치면 그 사진이 직전 차량 리포트에
+      // 추가되는 사고가 있었다(내외판 데미지에 남의 차 사진이 섞여 보이던 원인).
+      if (_G.submittedIds.has(String(requestId))) {
+        fetch(`${API_BASE_URL}/external/inspection/${requestId}/photo`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ category: newCatId, url: uri }),
@@ -1226,6 +1234,10 @@ export default function CarEvaluationSheet() {
     if (isViewMode) {
       loadEditData(true);
     } else if (isEditMode) {
+      // 이미 제출된 리포트를 다시 여는 경로 — 앱을 껐다 켠 뒤라 submittedIds가 비어 있어도
+      // 이 예약은 서버에 리포트가 이미 있는 상태다. 표시해둬야 여기서 한 사진 카테고리
+      // 수정이 서버 리포트에도 반영된다.
+      _G.submittedIds.add(String(requestId));
       loadEditData(isAdminRequest);
     } else {
       loadSavedData();
@@ -1796,7 +1808,7 @@ export default function CarEvaluationSheet() {
       }
 
       // 제출 완료 → 남은 업로드가 자동으로 서버에 패치
-      _G.submittedId = String(requestId);
+      _G.submittedIds.add(String(requestId));
 
       showAlert(
         isInspection ? "검수 완료" : "평가 완료",

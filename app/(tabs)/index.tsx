@@ -3,12 +3,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import Constants from 'expo-constants';
 import { useNavigation, useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import * as Location from 'expo-location';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Alert,
   Animated,
   Dimensions,
@@ -634,6 +635,32 @@ export default function DiagnosisManagement() {
     return () => { try { receivedSub?.remove(); } catch (_e) {} };
   }, [currentDriverId, fetchData]);
 
+  // 푸시만으로는 부족하다 — 알림 권한을 껐거나, 자동배정으로 나간 건이라 브로드캐스트
+  // 대상이 아니었거나, 위치가 오래돼 푸시 대상에서 빠진 경우엔 아무 신호도 안 온다.
+  // 그래서 화면을 열어둔 동안엔 12초마다 "대기건 지문"만 확인하고(수십 바이트), 값이
+  // 바뀐 순간에만 무거운 목록 조회를 돌린다 — 현장 데이터 사용량을 늘리지 않으면서
+  // 새 접수가 새로고침 없이 바로 뜨게 하는 방법.
+  const pulseRef = useRef<string | null>(null);
+  const screenFocused = useIsFocused();
+  useEffect(() => {
+    if (!currentDriverId || !screenFocused) return;
+    let stopped = false;
+
+    const checkPulse = async () => {
+      if (stopped || AppState.currentState !== 'active') return;
+      try {
+        const res = await axios.get(`${API_BASE_URL}/external/request/request-pulse`, { timeout: 8000 });
+        const sig = `${res.data?.count}|${res.data?.maxId}|${res.data?.maxUpdatedAt}`;
+        if (pulseRef.current !== null && pulseRef.current !== sig) fetchData();
+        pulseRef.current = sig;
+      } catch (_e) { /* 폴링 실패는 조용히 넘김 — 다음 주기에 다시 시도 */ }
+    };
+
+    checkPulse();
+    const timer = setInterval(checkPulse, 12000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [currentDriverId, screenFocused, fetchData]);
+
   // activeTab에 맞는 상태 필터 + 정렬 — 서버 재조회 없이 즉시 계산되므로 탭 전환이 순간적이다.
   const tabFilteredData = useMemo(() => {
     const canSeeRounding = driverTier === 'certified' || driverTier === 'agent';
@@ -715,7 +742,17 @@ export default function DiagnosisManagement() {
       Alert.alert('확정 완료', '내 예약 목록으로 이동합니다.');
       setActiveTab('upcoming');
       fetchData();
-    } catch { Alert.alert('오류', '확정 실패'); }
+    } catch (e: any) {
+      // 선착순 경합에서 진 경우(409) — 서버가 "이미 OOO 평가사님이 먼저 확정한 건입니다"를
+      // 내려준다. 예전엔 나중에 누른 쪽이 앞사람 배정을 그대로 덮어써서 앞사람의 "다가오는
+      // 예약"에서 건이 사라졌는데, 이제 서버가 원자적으로 막고 진 쪽에 이 안내가 뜬다.
+      if (e?.response?.status === 409) {
+        Alert.alert('확정 불가', e?.response?.data?.message || '이미 다른 평가사님이 먼저 확정한 건입니다.');
+        fetchData();
+        return;
+      }
+      Alert.alert('오류', '확정 실패');
+    }
   };
 
   const openAgentAssign = async (item: DiagnosisItem) => {
@@ -1053,7 +1090,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.30</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.31</Text>
               </View>
             </Animated.View>
           </Pressable>
