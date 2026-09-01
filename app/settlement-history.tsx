@@ -45,7 +45,8 @@ interface RawBooking {
 // 0은 관리자가 일부러 0원으로 저장한 값이므로 그대로 둔다.
 const effectiveRemoteBonus = (b: { remoteTier?: 'semi_remote' | 'remote' | null; isUrgent?: boolean; remoteBonus?: number | null }): number => {
   if (b.remoteBonus != null) return b.remoteBonus;
-  return (b.remoteTier === 'remote' ? 20000 : b.remoteTier === 'semi_remote' ? 10000 : 0) + (b.isUrgent ? 10000 : 0);
+  // 준오지 73,000 / 오지 85,000 / 긴급 73,000(규정 최소값) − 인증 기본 60,000 = 차액
+  return (b.remoteTier === 'remote' ? 25000 : b.remoteTier === 'semi_remote' ? 13000 : 0) + (b.isUrgent ? 13000 : 0);
 };
 
 // kind: 'diagnosis' — 본인이 직접 진단한 건(기본 진단비 대상)
