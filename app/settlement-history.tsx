@@ -28,6 +28,8 @@ interface RawBooking {
   completedAt?: string;
   firstCompletedAt?: string;
   remoteBonus?: number | null;
+  remoteTier?: 'semi_remote' | 'remote' | null;
+  isUrgent?: boolean;
   extraFee?: number | null;
   extraFeeMemo?: string | null;
   claimDeduction?: number | null;
@@ -36,6 +38,15 @@ interface RawBooking {
   agentBonus?: number | null;
   agentBonusMemo?: string | null;
 }
+
+// 오지/준오지/긴급 추가금. 관리자가 예약 수정창을 열어 저장해야만 remoteBonus에 값이
+// 들어가는 구조라, 오지·긴급 건인데도 추가금이 비어 있는 경우가 많았다(대시보드 정산과
+// 동일한 규칙을 여기에도 둬서 앱에 보이는 금액과 실제 지급액이 어긋나지 않게 한다).
+// 0은 관리자가 일부러 0원으로 저장한 값이므로 그대로 둔다.
+const effectiveRemoteBonus = (b: { remoteTier?: 'semi_remote' | 'remote' | null; isUrgent?: boolean; remoteBonus?: number | null }): number => {
+  if (b.remoteBonus != null) return b.remoteBonus;
+  return (b.remoteTier === 'remote' ? 20000 : b.remoteTier === 'semi_remote' ? 10000 : 0) + (b.isUrgent ? 10000 : 0);
+};
 
 // kind: 'diagnosis' — 본인이 직접 진단한 건(기본 진단비 대상)
 //       'management' — 에이전트 본인이 다른 평가사에게 지정 배정만 한 건(관리수당만 대상)
@@ -140,7 +151,7 @@ export default function SettlementHistoryScreen() {
   const itemFeeOf = useCallback(
     (item: SettlementRow) => {
       if (item.kind === 'management') return item.agentBonus || 0;
-      return isDirectPaidBooking(item) ? 0 : baseFee + (item.remoteBonus || 0) + (item.extraFee || 0);
+      return isDirectPaidBooking(item) ? 0 : baseFee + effectiveRemoteBonus(item) + (item.extraFee || 0);
     },
     [baseFee],
   );
@@ -230,7 +241,7 @@ export default function SettlementHistoryScreen() {
                         <Text style={[s.breakdown, { color: '#b45309' }]}>{directPaidLabel(item)}</Text>
                       ) : (
                         <Text style={[s.breakdown, { color: sub }]}>
-                          기본 {baseFee.toLocaleString()} · 추가 {(item.remoteBonus || 0).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
+                          기본 {baseFee.toLocaleString()} · 추가 {effectiveRemoteBonus(item).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
                         </Text>
                       )}
                       {itemClaim > 0 && (
