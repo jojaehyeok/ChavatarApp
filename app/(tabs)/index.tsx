@@ -5,6 +5,7 @@ import Constants from 'expo-constants';
 import { useNavigation, useRouter } from 'expo-router';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -319,7 +320,7 @@ const CANCEL_REASONS = [
     label: '판매자의 예약 취소',
     note: '진단일시가 내 활성시간(스케줄) 안이면 페널티가 부과됩니다. 활성시간 밖이면 페널티는 없습니다.',
   },
-  { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
+  { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진 2장을 촬영해 주세요. (헛걸음 보상 확인용)' },
 ];
 
 
@@ -467,6 +468,51 @@ export default function DiagnosisManagement() {
   // 자동배정이 애초에 활동시간 안인 건만 주기 때문에 항상 "갈 수 있었다"가 된다).
   const [cancelNewDate, setCancelNewDate] = useState('');
   const [cancelNewTime, setCancelNewTime] = useState('');
+  // 판매자 노쇼 증빙 — 갤러리 선택은 막고 즉석 촬영만 받는다. 메신저를 거친 사진은 EXIF가
+  // 지워지고 편집도 쉬워서 증빙이 안 되기 때문. 셔터를 누른 그 순간의 시각·GPS를 앱이 직접
+  // 기록해서 보내면 서버가 예약 시각·방문 주소와 대조할 수 있다.
+  const [noshowShots, setNoshowShots] = useState<{ uri: string; takenAt: string; lat: number | null; lng: number | null }[]>([]);
+  const [noshowUploading, setNoshowUploading] = useState(false);
+
+  const captureNoshowShot = async (label: string) => {
+    const cam = await ImagePicker.requestCameraPermissionsAsync();
+    if (cam.status !== 'granted') {
+      Alert.alert('권한 필요', '카메라 권한을 허용해주세요.');
+      return;
+    }
+    const shot = await ImagePicker.launchCameraAsync({ quality: 0.5 });
+    if (shot.canceled || !shot.assets?.[0]) return;
+
+    // 위치는 못 잡을 수 있다(지하주차장 등). 그래도 사진은 남긴다 — 서버가 "판정 불가"로
+    // 표시하고 관리자가 보고 판단한다.
+    let lat: number | null = null;
+    let lng: number | null = null;
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      lat = loc.coords.latitude;
+      lng = loc.coords.longitude;
+    } catch { /* 위치 실패는 무시 */ }
+
+    setNoshowShots(prev => [...prev, { uri: shot.assets[0].uri, takenAt: new Date().toISOString(), lat, lng }]);
+  };
+
+  // 취소 전송 직전에 S3로 올린다(진단 사진과 같은 업로드 경로 재사용)
+  const uploadNoshowShots = async (): Promise<{ url: string; takenAt: string; lat: number | null; lng: number | null }[]> => {
+    const out: { url: string; takenAt: string; lat: number | null; lng: number | null }[] = [];
+    for (const shot of noshowShots) {
+      const form = new FormData();
+      // @ts-ignore
+      form.append('file', { uri: shot.uri, name: `noshow_${Date.now()}.jpg`, type: 'image/jpeg' });
+      form.append('requestId', String(cancelItem?.id ?? ''));
+      form.append('category', 'noshow_proof');
+      form.append('carNumber', String(cancelItem?.carNumber ?? '미등록'));
+      const res = await fetch(`${API_BASE_URL}/external/inspection/upload`, { method: 'POST', body: form });
+      if (!res.ok) throw new Error('업로드 실패');
+      const data = await res.json();
+      out.push({ url: data.url, takenAt: shot.takenAt, lat: shot.lat, lng: shot.lng });
+    }
+    return out;
+  };
   const [cancelling, setCancelling] = useState(false);
 
   const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
@@ -934,12 +980,29 @@ export default function DiagnosisManagement() {
 
   const handleCancel = async () => {
     if (!cancelItem || !cancelReason) return;
+    if (cancelReason === '판매자 노쇼' && noshowShots.length < 2) {
+      Alert.alert('사진 필요', '헛걸음 보상 확인을 위해 현장 사진 2장을 촬영해주세요.');
+      return;
+    }
     setCancelling(true);
     try {
+      let noshowProof: { url: string; takenAt: string; lat: number | null; lng: number | null }[] | undefined;
+      if (cancelReason === '판매자 노쇼') {
+        setNoshowUploading(true);
+        try {
+          noshowProof = await uploadNoshowShots();
+        } catch {
+          Alert.alert('오류', '사진 업로드에 실패했습니다. 통신 상태를 확인하고 다시 시도해주세요.');
+          return;
+        } finally {
+          setNoshowUploading(false);
+        }
+      }
       await axios.patch(`${API_BASE_URL}/external/request/${cancelItem.id}/status`, {
         status: 'CANCELLED',
         cancelReason,
         cancelledByDriver: true,
+        noshowProof,
         // 판매자가 새 시간을 요청한 경우에만 보낸다 — 서버가 이 시간으로 예약을 옮기고
         // 그 시간 기준으로 페널티 여부를 판정한다.
         requestedDateTime: cancelNewDate && cancelNewTime ? `${cancelNewDate} ${cancelNewTime}` : undefined,
@@ -949,6 +1012,7 @@ export default function DiagnosisManagement() {
       setCancelReason('');
       setCancelNewDate('');
       setCancelNewTime('');
+      setNoshowShots([]);
       fetchData();
     } catch { Alert.alert('오류', '예약 취소에 실패했습니다.'); }
     finally { setCancelling(false); }
@@ -1165,7 +1229,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.35</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.36</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1664,6 +1728,43 @@ export default function DiagnosisManagement() {
                   </TouchableOpacity>
                 );
               })}
+              {cancelReason === '판매자 노쇼' && (
+                <View style={{ marginTop: 8 }}>
+                  <View style={[styles.cancelDivider, { backgroundColor: theme.border }]} />
+                  <Text style={[styles.ampmLabel, { color: theme.textMain, marginBottom: 4 }]}>
+                    현장 사진 ({noshowShots.length}/2)
+                  </Text>
+                  <Text style={[styles.cancelOptionNote, { color: theme.textSub, paddingHorizontal: 16, marginBottom: 8 }]}>
+                    1장은 차량이 보이게, 1장은 주변이 보이게 촬영해주세요.{'\n'}
+                    촬영한 시각과 위치가 함께 기록되어 헛걸음 보상 확인에 쓰입니다.{'\n'}
+                    갤러리 선택은 안 되고 지금 촬영만 가능합니다.
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16 }}>
+                    {noshowShots.map((shot, i) => (
+                      <View key={i} style={{ width: 72, height: 72, borderRadius: 8, overflow: 'hidden' }}>
+                        <Image source={{ uri: shot.uri }} style={{ width: '100%', height: '100%' }} resizeMethod="resize" />
+                        <TouchableOpacity
+                          style={{ position: 'absolute', top: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 10, padding: 2 }}
+                          onPress={() => setNoshowShots(prev => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <Ionicons name="close" size={14} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                    {noshowShots.length < 2 && (
+                      <TouchableOpacity
+                        style={{ width: 72, height: 72, borderRadius: 8, borderWidth: 1, borderStyle: 'dashed', borderColor: theme.border, justifyContent: 'center', alignItems: 'center' }}
+                        onPress={() => captureNoshowShot(noshowShots.length === 0 ? '차량' : '주변')}
+                      >
+                        <Ionicons name="camera" size={20} color={theme.textSub} />
+                        <Text style={{ color: theme.textSub, fontSize: 10, marginTop: 2 }}>
+                          {noshowShots.length === 0 ? '차량' : '주변'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              )}
               {cancelReason === '판매자의 예약 취소' && (
                 <View style={{ marginTop: 8 }}>
                   <View style={[styles.cancelDivider, { backgroundColor: theme.border }]} />
@@ -1691,7 +1792,7 @@ export default function DiagnosisManagement() {
                 onPress={handleCancel}
                 disabled={!cancelReason || cancelling}
               >
-                {cancelling
+                {cancelling || noshowUploading
                   ? <ActivityIndicator color="#fff" size="small" />
                   : <Text style={[styles.timeConfirmText, { color: cancelReason ? '#fff' : theme.textSub }]}>예약 취소</Text>
                 }
