@@ -145,7 +145,11 @@ function PickerGridThumb({
   if (!uri) {
     return <View style={[style, { backgroundColor: "#1c1c1e" }]} />;
   }
-  return <Image source={{ uri }} style={style} />;
+  // resizeMethod="resize"가 없으면 안드로이드가 카메라 원본(4000px급)을 그대로 디코딩해서
+  // 한 장에 수십 MB를 잡는다 — 앨범을 스크롤하면 곧 힙이 말라 썸네일이 검게 비고, 그 여파로
+  // 진단 화면의 사진 그리드까지 같이 안 보이게 된다(현장 신고 증상). 뷰 크기에 맞춰
+  // 축소 디코딩하도록 지정한다.
+  return <Image source={{ uri }} style={style} resizeMethod="resize" fadeDuration={0} />;
 }
 
 // 실측(50장): 병렬 5개는 19.3초·순서역전 12회, 싱글 I/O는 46.5초·역전 0회였는데,
@@ -2255,6 +2259,7 @@ export default function CarEvaluationSheet() {
                 source={{ uri }}
                 style={styles.fullImg}
                 resizeMode="cover"
+                resizeMethod="resize"
               />
             ) : (
               <>
@@ -2801,8 +2806,12 @@ export default function CarEvaluationSheet() {
               </View>
             </View>
 
-            {carEditVisible && (
-              <Modal transparent animationType="fade" onRequestClose={saveCarInfo}>
+            {/* 예전엔 {carEditVisible && <Modal/>}로 조건부 마운트했는데, 안드로이드에서 Modal은
+                별도 네이티브 창이라 열고 닫을 때마다 창이 새로 만들어졌다 — 사진 상태 변경으로
+                리렌더가 잦은 화면이라 페이드 애니메이션 도중 창이 교체되면서 모달이 두 겹으로
+                보인다는 현장 신고가 있었다. RN 권장 방식대로 항상 렌더하고 visible로만 제어한다. */}
+            {(
+              <Modal visible={carEditVisible} transparent animationType="fade" onRequestClose={saveCarInfo}>
                 {/* Modal은 부모의 KeyboardAvoidingView 밖(별도 네이티브 창)에 렌더되므로
                     여기서 다시 감싸주지 않으면 키보드가 열렸을 때 차량명 입력칸이
                     키보드에 가려도 그대로 방치된다 — 평가사 피드백으로 발견된 버그. */}
@@ -3406,7 +3415,7 @@ export default function CarEvaluationSheet() {
                                   <ActivityIndicator size="small" color="#999" />
                                 </View>
                               ) : (
-                                <Image source={{ uri }} style={styles.photoItemGrid} />
+                                <Image source={{ uri }} style={styles.photoItemGrid} resizeMethod="resize" fadeDuration={0} />
                               )}
                             </TouchableOpacity>
                             {!isViewMode && (
@@ -3757,7 +3766,7 @@ export default function CarEvaluationSheet() {
                           setViewerVisible(true);
                         }}
                       >
-                        <Image source={{ uri }} style={styles.photoItemGrid} />
+                        <Image source={{ uri }} style={styles.photoItemGrid} resizeMethod="resize" fadeDuration={0} />
                         {isUploading && (
                           <View style={styles.uploadingOverlay}>
                             <ActivityIndicator size="small" color="#fff" />
