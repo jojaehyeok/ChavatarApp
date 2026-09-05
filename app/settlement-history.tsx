@@ -43,10 +43,21 @@ interface RawBooking {
 // 들어가는 구조라, 오지·긴급 건인데도 추가금이 비어 있는 경우가 많았다(대시보드 정산과
 // 동일한 규칙을 여기에도 둬서 앱에 보이는 금액과 실제 지급액이 어긋나지 않게 한다).
 // 0은 관리자가 일부러 0원으로 저장한 값이므로 그대로 둔다.
-const effectiveRemoteBonus = (b: { remoteTier?: 'semi_remote' | 'remote' | null; isUrgent?: boolean; remoteBonus?: number | null }): number => {
+// 추가금은 등급별로 다르다 — 일반은 준오지 +10,000 / 오지 +20,000, 인증·에이전트는 규정표
+// 기준 +13,000 / +25,000. 대시보드 settlement.tsx의 BONUS_BY_TIER와 같은 값이어야 한다.
+const BONUS_BY_TIER: Record<string, { semiRemote: number; remote: number; urgent: number }> = {
+  general: { semiRemote: 10000, remote: 20000, urgent: 10000 },
+  certified: { semiRemote: 13000, remote: 25000, urgent: 13000 },
+  agent: { semiRemote: 13000, remote: 25000, urgent: 13000 },
+};
+
+const effectiveRemoteBonus = (
+  b: { remoteTier?: 'semi_remote' | 'remote' | null; isUrgent?: boolean; remoteBonus?: number | null },
+  tier: string,
+): number => {
   if (b.remoteBonus != null) return b.remoteBonus;
-  // 준오지 73,000 / 오지 85,000 / 긴급 73,000(규정 최소값) − 인증 기본 60,000 = 차액
-  return (b.remoteTier === 'remote' ? 25000 : b.remoteTier === 'semi_remote' ? 13000 : 0) + (b.isUrgent ? 13000 : 0);
+  const rate = BONUS_BY_TIER[tier] ?? BONUS_BY_TIER.general;
+  return (b.remoteTier === 'remote' ? rate.remote : b.remoteTier === 'semi_remote' ? rate.semiRemote : 0) + (b.isUrgent ? rate.urgent : 0);
 };
 
 // kind: 'diagnosis' — 본인이 직접 진단한 건(기본 진단비 대상)
@@ -77,6 +88,8 @@ export default function SettlementHistoryScreen() {
   const now = new Date();
   const [loading, setLoading] = useState(true);
   const [baseFee, setBaseFee] = useState(0);
+  // 추가금(오지·준오지·긴급)이 등급별로 달라서 baseFee와 별도로 등급 자체도 들고 있어야 한다
+  const [driverTier, setDriverTier] = useState<string>('general');
   const [byMonth, setByMonth] = useState<Map<string, SettlementRow[]>>(new Map());
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1); // 1~12
@@ -97,6 +110,7 @@ export default function SettlementHistoryScreen() {
       const all: any[] = Array.isArray(listRes.data) ? listRes.data : listRes.data.data;
       const tier: string | undefined = driverRes?.data?.tier;
       setBaseFee(tier ? (BASE_FEE_BY_TIER[tier] ?? 0) : 0);
+      setDriverTier(tier || 'general');
 
       // "완료된 예약" 탭과 달리 정산은 실제 수행자 기준(diagnosis)과 배정 관리자 기준(management)을
       // 구분해서 잡아야 함 — 한 건이 두 조건에 동시에 해당하면(자기 자신에게 지정배정한 특수 케이스)
@@ -152,9 +166,9 @@ export default function SettlementHistoryScreen() {
   const itemFeeOf = useCallback(
     (item: SettlementRow) => {
       if (item.kind === 'management') return item.agentBonus || 0;
-      return isDirectPaidBooking(item) ? 0 : baseFee + effectiveRemoteBonus(item) + (item.extraFee || 0);
+      return isDirectPaidBooking(item) ? 0 : baseFee + effectiveRemoteBonus(item, driverTier) + (item.extraFee || 0);
     },
-    [baseFee],
+    [baseFee, driverTier],
   );
   const feeTotal = useMemo(() => data.reduce((sum, item) => sum + itemFeeOf(item), 0), [data, itemFeeOf]);
   const claimTotal = useMemo(() => data.reduce((sum, item) => sum + (item.kind === 'diagnosis' ? (item.claimDeduction || 0) : 0), 0), [data]);
@@ -242,7 +256,7 @@ export default function SettlementHistoryScreen() {
                         <Text style={[s.breakdown, { color: '#b45309' }]}>{directPaidLabel(item)}</Text>
                       ) : (
                         <Text style={[s.breakdown, { color: sub }]}>
-                          기본 {baseFee.toLocaleString()} · 추가 {effectiveRemoteBonus(item).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
+                          기본 {baseFee.toLocaleString()} · 추가 {effectiveRemoteBonus(item, driverTier).toLocaleString()} · 기타 {(item.extraFee || 0).toLocaleString()}
                         </Text>
                       )}
                       {itemClaim > 0 && (
