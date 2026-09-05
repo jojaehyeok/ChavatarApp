@@ -474,6 +474,14 @@ export default function DiagnosisManagement() {
   const [noshowShots, setNoshowShots] = useState<{ uri: string; takenAt: string; lat: number | null; lng: number | null }[]>([]);
   const [noshowUploading, setNoshowUploading] = useState(false);
 
+  // 현장에서 카카오톡·내비에 붙여넣을 일이 잦아서, 길게 누르지 않고 한 번 탭으로 복사되게 한다.
+  const copyToClipboard = async (text: string | undefined | null, label: string) => {
+    if (!text) return;
+    await Clipboard.setStringAsync(text);
+    Alert.alert('복사됨', `${label}를 복사했습니다.
+${text}`);
+  };
+
   const captureNoshowShot = async (label: string) => {
     const cam = await ImagePicker.requestCameraPermissionsAsync();
     if (cam.status !== 'granted') {
@@ -1335,8 +1343,26 @@ export default function DiagnosisManagement() {
                   </View>
                 )}
                 <View style={styles.infoRow}><Text style={styles.label}>딜러이름</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.dealerName || '없음'}</Text></View>
-                <View style={styles.infoRow}><Text style={styles.label}>차량번호</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text></View>
-                <View style={styles.infoRow}><Text style={styles.label}>위치</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.address}</Text></View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.label}>차량번호</Text>
+                  {activeTab === 'upcoming' ? (
+                    <TouchableOpacity style={{ flex: 1 }} onPress={() => copyToClipboard(item.carNumber, '차량번호')} activeOpacity={0.6}>
+                      <Text style={[styles.value, { color: theme.accent, textDecorationLine: 'underline' }]}>{item.carNumber}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={[styles.value, { color: theme.textMain }]}>{item.carNumber}</Text>
+                  )}
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.label}>위치</Text>
+                  {activeTab === 'request' ? (
+                    <TouchableOpacity style={{ flex: 1 }} onPress={() => copyToClipboard(item.address, '방문주소')} activeOpacity={0.6}>
+                      <Text style={[styles.value, { color: theme.accent, textDecorationLine: 'underline' }]}>{item.address}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={[styles.value, { color: theme.textMain }]}>{item.address}</Text>
+                  )}
+                </View>
                 <View style={styles.infoRow}><Text style={styles.label}>시간</Text><Text style={[styles.value, { color: theme.textMain }]}>{item.preferredDateTime}</Text></View>
                 {activeTab !== 'request' && (
                   <View style={styles.infoRow}>
