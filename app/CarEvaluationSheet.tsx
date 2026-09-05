@@ -126,6 +126,7 @@ function PickerGridThumb({
   const [uri, setUri] = useState<string | null>(
     annotatedUri ?? (Platform.OS === "ios" ? _localUriCache.get(asset.id) ?? null : asset.uri),
   );
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (annotatedUri) {
       setUri(annotatedUri);
@@ -145,11 +146,30 @@ function PickerGridThumb({
   if (!uri) {
     return <View style={[style, { backgroundColor: "#1c1c1e" }]} />;
   }
+  // 파일이 실제로 없는 사진(삼성/구글 클라우드로만 올라가 있고 기기에선 지워진 경우 등)은
+  // 디코딩이 실패해 그냥 검은 칸으로 남는다 — 평가사가 "왜 안 보이지" 하고 헤매지 않도록
+  // 실패를 명시적으로 표시한다.
+  if (failed) {
+    return (
+      <View style={[style, { backgroundColor: "#1c1c1e", justifyContent: "center", alignItems: "center" }]}>
+        <Ionicons name="cloud-offline-outline" size={18} color="#666" />
+        <Text style={{ color: "#666", fontSize: 9, marginTop: 2 }}>미리보기 없음</Text>
+      </View>
+    );
+  }
   // resizeMethod="resize"가 없으면 안드로이드가 카메라 원본(4000px급)을 그대로 디코딩해서
   // 한 장에 수십 MB를 잡는다 — 앨범을 스크롤하면 곧 힙이 말라 썸네일이 검게 비고, 그 여파로
   // 진단 화면의 사진 그리드까지 같이 안 보이게 된다(현장 신고 증상). 뷰 크기에 맞춰
   // 축소 디코딩하도록 지정한다.
-  return <Image source={{ uri }} style={style} resizeMethod="resize" fadeDuration={0} />;
+  return (
+    <Image
+      source={{ uri }}
+      style={style}
+      resizeMethod="resize"
+      fadeDuration={0}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 // 실측(50장): 병렬 5개는 19.3초·순서역전 12회, 싱글 I/O는 46.5초·역전 0회였는데,
@@ -1574,6 +1594,47 @@ export default function CarEvaluationSheet() {
     uploadIssueVideo(uri);
   };
 
+  // 촬영뿐 아니라 이미 찍어둔 영상도 올릴 수 있게 — 현장에서 먼저 폰 카메라로 찍고
+  // 나중에 진단서를 쓰는 경우가 많다. 길이/용량 상한은 안내 문구(15초)와 같은 기준으로 두되,
+  // 조금 넘긴 건 되돌려보내지 말고 경고만 하고 진행한다(현장에서 다시 찍게 하면 손해가 크다).
+  const ISSUE_VIDEO_MAX_SEC = 20;   // 안내는 15초, 실제 차단은 20초부터
+  const ISSUE_VIDEO_MAX_BYTES = 60 * 1024 * 1024; // 60MB — 현장 LTE에서 올릴 수 있는 현실적 상한
+
+  const pickIssueVideoFromGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      showAlert("권한 필요", "사진첩 접근 권한을 허용해주세요.");
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      allowsMultipleSelection: false,
+      quality: 0.5,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+
+    const seconds = asset.duration ? asset.duration / 1000 : null;
+    if (seconds != null && seconds > ISSUE_VIDEO_MAX_SEC) {
+      showAlert(
+        "영상이 너무 깁니다",
+        `${Math.round(seconds)}초짜리 영상입니다. 소리와 증상이 담긴 15초 이내 구간으로 잘라서 올려주세요.`,
+      );
+      return;
+    }
+    if (asset.fileSize && asset.fileSize > ISSUE_VIDEO_MAX_BYTES) {
+      showAlert(
+        "영상 용량이 큽니다",
+        `${(asset.fileSize / 1048576).toFixed(0)}MB짜리 영상이라 현장에서 업로드가 어렵습니다. 더 짧게 잘라서 올려주세요.`,
+      );
+      return;
+    }
+    if (seconds != null && seconds > 15) {
+      showAlert("안내", "15초를 조금 넘는 영상입니다. 그대로 업로드합니다.");
+    }
+    handleIssueVideoRecorded(asset.uri);
+  };
+
   const uploadIssueVideo = async (uri: string, attempt = 1) => {
     if (isPractice) return;
     setIssueVideoUploading(true);
@@ -1967,6 +2028,16 @@ export default function CarEvaluationSheet() {
     const isSingle = SINGLE_IMG_CATS.includes(pickerCategoryId);
     setPickerVisible(false);
     setTimeout(() => pickImage(pickerCategoryId, "camera", isSingle), 300);
+  };
+
+  // 앱 자체 앨범 목록(MediaLibrary)은 기기에 파일로 저장된 사진만 훑는다 — 문자(MMS)로 받아
+  // 저장한 이전등록증처럼 저장 위치가 다르거나 촬영시각이 옛날로 잡혀 최신순 목록 한참 뒤로
+  // 밀리는 사진은 평가사 눈에 안 띈다. 폰 기본 갤러리(시스템 피커)는 그런 경로까지 다 보여주므로
+  // 탈출구로 열어준다.
+  const pickerLaunchSystemGallery = () => {
+    const isSingle = SINGLE_IMG_CATS.includes(pickerCategoryId);
+    setPickerVisible(false);
+    setTimeout(() => pickImage(pickerCategoryId, "library", isSingle), 300);
   };
 
   // ─── 이미지 선택/업로드 (DiagnosisInspection 패턴 유지) ──────────────────
@@ -2602,6 +2673,9 @@ export default function CarEvaluationSheet() {
               <View
                 style={{ flexDirection: "row", alignItems: "center", gap: 16 }}
               >
+                <TouchableOpacity onPress={pickerLaunchSystemGallery}>
+                  <Ionicons name="images-outline" size={24} color="#fff" />
+                </TouchableOpacity>
                 <TouchableOpacity onPress={pickerLaunchCamera}>
                   <Ionicons name="camera-outline" size={26} color="#fff" />
                 </TouchableOpacity>
@@ -2652,10 +2726,13 @@ export default function CarEvaluationSheet() {
               data={pickerAssets}
               keyExtractor={(item) => item.id}
               numColumns={3}
+              // 썸네일을 축소 디코딩하도록 고친 뒤로는 메모리 여유가 생겼다 — 창을 너무 좁게
+              // 잡아두면 빠르게 스크롤할 때 아직 안 그려진 칸이 검게 비어 "사진이 안 보인다"로
+              // 보이므로 렌더 윈도우를 넓힌다.
               removeClippedSubviews={true}
-              maxToRenderPerBatch={12}
-              windowSize={5}
-              initialNumToRender={12}
+              maxToRenderPerBatch={16}
+              windowSize={11}
+              initialNumToRender={20}
               onEndReached={() => {
                 if (pickerHasMore && !pickerLoading)
                   loadPickerAssets(pickerCurrentAlbum, pickerEndCursor);
@@ -3651,13 +3728,22 @@ export default function CarEvaluationSheet() {
                   </View>
                 ) : (
                   !isViewMode && (
-                    <TouchableOpacity
-                      style={[styles.photoWrapperGrid, styles.gridAddBtn]}
-                      onPress={() => setIssueVideoRecorderVisible(true)}
-                    >
-                      <Ionicons name="videocam" size={22} color="#666" />
-                      <Text style={styles.gridAddText}>영상추가</Text>
-                    </TouchableOpacity>
+                    <>
+                      <TouchableOpacity
+                        style={[styles.photoWrapperGrid, styles.gridAddBtn]}
+                        onPress={() => setIssueVideoRecorderVisible(true)}
+                      >
+                        <Ionicons name="videocam" size={22} color="#666" />
+                        <Text style={styles.gridAddText}>영상촬영</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.photoWrapperGrid, styles.gridAddBtn]}
+                        onPress={pickIssueVideoFromGallery}
+                      >
+                        <Ionicons name="images-outline" size={22} color="#666" />
+                        <Text style={styles.gridAddText}>갤러리</Text>
+                      </TouchableOpacity>
+                    </>
                   )
                 )}
               </View>

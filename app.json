@@ -2,7 +2,7 @@
   "expo": {
     "name": "차바타",
     "slug": "ChavatarApp",
-    "version": "1.4.33",
+    "version": "1.4.34",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "chavatarapp",
@@ -40,7 +40,7 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ],
-      "versionCode": 69
+      "versionCode": 70
     },
     "web": {
       "bundler": "metro",
