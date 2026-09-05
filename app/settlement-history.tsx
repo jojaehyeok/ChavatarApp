@@ -51,11 +51,17 @@ const BONUS_BY_TIER: Record<string, { semiRemote: number; remote: number; urgent
   agent: { semiRemote: 13000, remote: 25000, urgent: 13000 },
 };
 
+// 자동 적용 시작 시점(방문예정일 기준) — 8월 이전 건은 이미 그 달 기준으로 정산이 끝나서
+// 소급하지 않는다. 대시보드 settlement.tsx의 BONUS_AUTO_FROM과 반드시 같아야 앱에 보이는
+// 금액과 실제 지급액이 어긋나지 않는다.
+const BONUS_AUTO_FROM = '2026-09';
+
 const effectiveRemoteBonus = (
-  b: { remoteTier?: 'semi_remote' | 'remote' | null; isUrgent?: boolean; remoteBonus?: number | null },
+  b: { remoteTier?: 'semi_remote' | 'remote' | null; isUrgent?: boolean; remoteBonus?: number | null; preferredDateTime?: string },
   tier: string,
 ): number => {
   if (b.remoteBonus != null) return b.remoteBonus;
+  if ((b.preferredDateTime || '') < BONUS_AUTO_FROM) return 0; // 소급 적용 안 함
   const rate = BONUS_BY_TIER[tier] ?? BONUS_BY_TIER.general;
   return (b.remoteTier === 'remote' ? rate.remote : b.remoteTier === 'semi_remote' ? rate.semiRemote : 0) + (b.isUrgent ? rate.urgent : 0);
 };
