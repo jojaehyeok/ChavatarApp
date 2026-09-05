@@ -322,6 +322,71 @@ const CANCEL_REASONS = [
   { id: '판매자 노쇼', label: '판매자 노쇼', note: '현장 사진을 꼭 첨부해 주세요.' },
 ];
 
+
+// 날짜·시간 선택 UI — "예약 시간 변경"과 "예약 취소(판매자가 요청한 시간)" 두 곳에서 같은
+// 방식으로 고르게 하려고 컴포넌트로 뺐다. 취소할 때 판매자가 원한 시간을 받아야
+// "그 시간에 갈 수 있었는지"를 서버가 제대로 판정할 수 있다.
+function DateTimePicker({
+  date, time, onDate, onTime, theme,
+}: {
+  date: string;
+  time: string;
+  onDate: (v: string) => void;
+  onTime: (v: string) => void;
+  theme: any;
+}) {
+  return (
+    <>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeDateScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+        {getDateStrip(30).map(d => {
+          const ymd = toYMD(d);
+          const isSelected = date === ymd;
+          const isToday = ymd === toYMD(new Date());
+          return (
+            <TouchableOpacity
+              key={ymd}
+              style={[styles.timeDateChip, { backgroundColor: isSelected ? theme.textMain : theme.timeSlotBg }]}
+              onPress={() => onDate(ymd)}
+            >
+              <Text style={[styles.timeDateChipDay, { color: isSelected ? theme.modalBg : theme.textSub }]}>
+                {isToday ? '오늘' : DAY_KO[d.getDay()]}
+              </Text>
+              <Text style={[styles.timeDateChipNum, { color: isSelected ? theme.modalBg : theme.textMain }]}>
+                {d.getDate()}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+      <View style={[styles.timeDivider, { backgroundColor: theme.border }]} />
+      <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오전</Text>
+      <View style={styles.timeGrid}>
+        {AM_TIMES.map(t => (
+          <TouchableOpacity
+            key={t}
+            style={[styles.timeSlotBtn, { backgroundColor: time === t ? theme.textMain : theme.timeSlotBg }]}
+            onPress={() => onTime(t)}
+          >
+            <Text style={[styles.timeSlotText, { color: time === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오후</Text>
+      <View style={styles.timeGrid}>
+        {PM_TIMES.map(t => (
+          <TouchableOpacity
+            key={t}
+            style={[styles.timeSlotBtn, { backgroundColor: time === t ? theme.textMain : theme.timeSlotBg }]}
+            onPress={() => onTime(t)}
+          >
+            <Text style={[styles.timeSlotText, { color: time === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
+  );
+}
+
 export default function DiagnosisManagement() {
   const systemTheme = useColorScheme();
   const isDark = systemTheme === 'dark';
@@ -397,6 +462,11 @@ export default function DiagnosisManagement() {
   const [agentAssigning, setAgentAssigning] = useState(false);
   const [contactSaving, setContactSaving] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  // "판매자의 예약 취소"일 때 판매자가 새로 요청한 방문 시간. 이 값이 있어야 서버가
+  // "그 시간에 갈 수 있었는지"로 페널티 여부를 제대로 판정한다(원래 시간으로 판정하면
+  // 자동배정이 애초에 활동시간 안인 건만 주기 때문에 항상 "갈 수 있었다"가 된다).
+  const [cancelNewDate, setCancelNewDate] = useState('');
+  const [cancelNewTime, setCancelNewTime] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
   const newDateTime = selectedDate && selectedTime ? `${selectedDate} ${selectedTime}` : '';
@@ -870,10 +940,15 @@ export default function DiagnosisManagement() {
         status: 'CANCELLED',
         cancelReason,
         cancelledByDriver: true,
+        // 판매자가 새 시간을 요청한 경우에만 보낸다 — 서버가 이 시간으로 예약을 옮기고
+        // 그 시간 기준으로 페널티 여부를 판정한다.
+        requestedDateTime: cancelNewDate && cancelNewTime ? `${cancelNewDate} ${cancelNewTime}` : undefined,
       });
       Alert.alert('취소 완료', '예약이 취소되었습니다.');
       setCancelItem(null);
       setCancelReason('');
+      setCancelNewDate('');
+      setCancelNewTime('');
       fetchData();
     } catch { Alert.alert('오류', '예약 취소에 실패했습니다.'); }
     finally { setCancelling(false); }
@@ -1090,7 +1165,7 @@ export default function DiagnosisManagement() {
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.34</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.35</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1263,52 +1338,7 @@ export default function DiagnosisManagement() {
                   {selectedDate ? '시간을 선택해 주세요.' : ''}
                 </Text>
               </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeDateScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
-                {getDateStrip(30).map(d => {
-                  const ymd = toYMD(d);
-                  const isSelected = selectedDate === ymd;
-                  const isToday = ymd === toYMD(new Date());
-                  return (
-                    <TouchableOpacity
-                      key={ymd}
-                      style={[styles.timeDateChip, { backgroundColor: isSelected ? theme.textMain : theme.timeSlotBg }]}
-                      onPress={() => setSelectedDate(ymd)}
-                    >
-                      <Text style={[styles.timeDateChipDay, { color: isSelected ? theme.modalBg : theme.textSub }]}>
-                        {isToday ? '오늘' : DAY_KO[d.getDay()]}
-                      </Text>
-                      <Text style={[styles.timeDateChipNum, { color: isSelected ? theme.modalBg : theme.textMain }]}>
-                        {d.getDate()}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-              <View style={[styles.timeDivider, { backgroundColor: theme.border }]} />
-              <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오전</Text>
-              <View style={styles.timeGrid}>
-                {AM_TIMES.map(t => (
-                  <TouchableOpacity
-                    key={t}
-                    style={[styles.timeSlotBtn, { backgroundColor: selectedTime === t ? theme.textMain : theme.timeSlotBg }]}
-                    onPress={() => setSelectedTime(t)}
-                  >
-                    <Text style={[styles.timeSlotText, { color: selectedTime === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={[styles.ampmLabel, { color: theme.textMain }]}>오후</Text>
-              <View style={styles.timeGrid}>
-                {PM_TIMES.map(t => (
-                  <TouchableOpacity
-                    key={t}
-                    style={[styles.timeSlotBtn, { backgroundColor: selectedTime === t ? theme.textMain : theme.timeSlotBg }]}
-                    onPress={() => setSelectedTime(t)}
-                  >
-                    <Text style={[styles.timeSlotText, { color: selectedTime === t ? theme.modalBg : theme.textMain }]}>{t}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <DateTimePicker date={selectedDate} time={selectedTime} onDate={setSelectedDate} onTime={setSelectedTime} theme={theme} />
               <View style={{ height: 120 }} />
             </ScrollView>
             <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
@@ -1634,6 +1664,25 @@ export default function DiagnosisManagement() {
                   </TouchableOpacity>
                 );
               })}
+              {cancelReason === '판매자의 예약 취소' && (
+                <View style={{ marginTop: 8 }}>
+                  <View style={[styles.cancelDivider, { backgroundColor: theme.border }]} />
+                  <Text style={[styles.ampmLabel, { color: theme.textMain, marginBottom: 4 }]}>
+                    판매자가 요청한 시간
+                  </Text>
+                  <Text style={[styles.cancelOptionNote, { color: theme.textSub, paddingHorizontal: 16, marginBottom: 8 }]}>
+                    판매자가 원하는 시간을 골라주세요. 그 시간이 평가사님 활동시간 밖이면
+                    불이익 없이 다른 평가사에게 재배정됩니다.
+                  </Text>
+                  <DateTimePicker
+                    date={cancelNewDate}
+                    time={cancelNewTime}
+                    onDate={setCancelNewDate}
+                    onTime={setCancelNewTime}
+                    theme={theme}
+                  />
+                </View>
+              )}
               <View style={{ height: 120 }} />
             </ScrollView>
             <View style={[styles.timeModalBottom, { backgroundColor: theme.modalBg, borderTopColor: theme.border, paddingBottom: Math.max(insets.bottom, 16) }]}>
