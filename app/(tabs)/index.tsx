@@ -457,6 +457,8 @@ export default function DiagnosisManagement() {
   const [requestInfoItem, setRequestInfoItem] = useState<DiagnosisItem | null>(null);
   const [isAgentTier, setIsAgentTier] = useState(false);
   const [driverTier, setDriverTier] = useState<'general' | 'certified' | 'agent'>('general');
+  // 내 차량번호("내 스케줄"에서 등록) — 차주에게 보내는 확정문자에 넣어 출입등록에 쓰게 한다
+  const [myCarNumber, setMyCarNumber] = useState('');
   const [roundingSaving, setRoundingSaving] = useState(false);
   const [agentAssignItem, setAgentAssignItem] = useState<DiagnosisItem | null>(null);
   const [agentDriverList, setAgentDriverList] = useState<{ id: number; name: string }[]>([]);
@@ -600,6 +602,7 @@ ${text}`);
         setIsAgentTier(res.data?.tier === 'agent');
         setDriverTier(res.data?.tier === 'certified' || res.data?.tier === 'agent' ? res.data.tier : 'general');
         setCanHandleOutsourced(!!res.data?.canHandleOutsourced);
+        setMyCarNumber((res.data?.carNumber || '').trim());
       })
       .catch(() => {});
   }, [currentDriverId]);
@@ -686,6 +689,12 @@ ${text}`);
         `[진단 일정]`,
         `일정 : ${schedule}`,
         `주소 : ${addressLine}`,
+        // 차주에게만 넣는다 — 아파트·사업장 출입등록을 하는 쪽이 차주라서, 딜러에게는
+        // 알려줘도 쓸 데가 없다. 차량번호를 아직 등록 안 한 진단사면 줄 자체를 뺀다
+        // ("미등록"이라고 적힌 문자가 고객에게 나가면 안 됨 — 앱 "내 스케줄"에서 등록).
+        ...(target === 'customer' && myCarNumber
+          ? [`진단사 차량번호 : ${myCarNumber} (출입등록 필요시 등록 부탁드립니다)`]
+          : []),
         ``,
         `[준비해 주세요]`,
         `1. 자동차 등록증 원본을 챙겨주세요.`,
@@ -1237,7 +1246,7 @@ ${text}`);
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.38</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.39</Text>
               </View>
             </Animated.View>
           </Pressable>
