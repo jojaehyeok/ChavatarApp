@@ -58,7 +58,7 @@ export default function MyScheduleScreen() {
   const [maxDaily, setMaxDaily] = useState(5);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [selectedVehicles, setSelectedVehicles] = useState<string[]>(['승용차', 'SUV']);
-  // 내가 타고 가는 차량번호 — 고객에게 나가는 배정 안내 알림톡에 "평가 차량번호"로 들어간다.
+  // 내가 타고 가는 차량번호 — 고객에게 나가는 배정 안내 알림톡에 "진단사 차량번호"로 들어간다.
   // 개인 연락처를 알려주지 않는 대신, 고객이 도착한 차를 이걸로 알아본다.
   const [myCarNumber, setMyCarNumber] = useState('');
 
@@ -178,7 +178,7 @@ export default function MyScheduleScreen() {
         <View style={[s.section, { backgroundColor: card, borderColor: border }]}>
           <Text style={[s.sectionTitle, { color: text }]}>내 차량번호</Text>
           <Text style={[s.sectionSub, { color: sub }]}>
-            고객에게 가는 배정 안내에 &quot;평가 차량번호&quot;로 표시됩니다. 비워두면 &quot;미등록&quot;으로 나갑니다.
+            고객에게 가는 배정 안내에 &quot;진단사 차량번호&quot;로 표시됩니다. 비워두면 &quot;미등록&quot;으로 나갑니다.
           </Text>
           <TextInput
             value={myCarNumber}
