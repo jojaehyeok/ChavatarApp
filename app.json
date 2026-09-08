@@ -2,7 +2,7 @@
   "expo": {
     "name": "차바타",
     "slug": "ChavatarApp",
-    "version": "1.4.37",
+    "version": "1.4.38",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "chavatarapp",
