@@ -10,6 +10,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   useColorScheme,
   View,
@@ -57,6 +58,9 @@ export default function MyScheduleScreen() {
   const [maxDaily, setMaxDaily] = useState(5);
   const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
   const [selectedVehicles, setSelectedVehicles] = useState<string[]>(['승용차', 'SUV']);
+  // 내가 타고 가는 차량번호 — 고객에게 나가는 배정 안내 알림톡에 "평가 차량번호"로 들어간다.
+  // 개인 연락처를 알려주지 않는 대신, 고객이 도착한 차를 이걸로 알아본다.
+  const [myCarNumber, setMyCarNumber] = useState('');
 
   // 관리자가 계정을 삭제/재생성해서 로컬에 남은 driverId가 더 이상 서버에 없는 경우 —
   // 로그인 화면(app/(auth)/index.tsx)의 자동로그인 재검증과 같은 패턴으로, 앱이 이미 켜져있는
@@ -79,6 +83,7 @@ export default function MyScheduleScreen() {
       if (d.maxDailyBookings) setMaxDaily(d.maxDailyBookings);
       if (d.regions?.length) setSelectedRegions(d.regions);
       if (d.vehicleTypes?.length) setSelectedVehicles(d.vehicleTypes);
+      if (d.carNumber) setMyCarNumber(d.carNumber);
     } catch (e) {
       if (axios.isAxiosError(e) && e.response?.status === 404) {
         setLoading(false);
@@ -122,6 +127,7 @@ export default function MyScheduleScreen() {
         availableEndTime: endTime,
         maxDailyBookings: maxDaily,
         vehicleTypes: selectedVehicles,
+        carNumber: myCarNumber.trim(),
       });
       Alert.alert('저장 완료', '스케줄이 업데이트되었습니다.', [{ text: '확인', onPress: () => router.back() }]);
     } catch (e) {
@@ -167,6 +173,22 @@ export default function MyScheduleScreen() {
       </View>
 
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}>
+
+        {/* 내 차량번호 */}
+        <View style={[s.section, { backgroundColor: card, borderColor: border }]}>
+          <Text style={[s.sectionTitle, { color: text }]}>내 차량번호</Text>
+          <Text style={[s.sectionSub, { color: sub }]}>
+            고객에게 가는 배정 안내에 &quot;평가 차량번호&quot;로 표시됩니다. 비워두면 &quot;미등록&quot;으로 나갑니다.
+          </Text>
+          <TextInput
+            value={myCarNumber}
+            onChangeText={setMyCarNumber}
+            placeholder="예) 12가 3456"
+            placeholderTextColor={sub}
+            autoCorrect={false}
+            style={[s.input, { color: text, borderColor: border, backgroundColor: slotBg }]}
+          />
+        </View>
 
         {/* 가능 요일 */}
         <View style={[s.section, { backgroundColor: card, borderColor: border }]}>
@@ -356,6 +378,8 @@ const s = StyleSheet.create({
   section: { marginHorizontal: 16, marginTop: 16, borderRadius: 16, borderWidth: 1, padding: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
   sectionSub: { fontSize: 12, marginBottom: 14 },
+
+  input: { height: 50, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, fontSize: 16, fontWeight: '600' },
 
   dayRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   dayBtn: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
