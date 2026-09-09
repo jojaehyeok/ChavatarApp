@@ -177,10 +177,9 @@ interface DiagnosisItem {
   isExportBooking?: boolean;
   remoteTier?: 'semi_remote' | 'remote' | null;
   nearestDriverKm?: number | null;
-  // 묶음 진단 — 같은 날 같은 장소의 여러 대. 서버가 대표 여부까지 판정해서 내려준다.
+  // 묶음 진단 — 같은 날 같은 장소의 여러 대. 서버가 판정해서 내려준다.
   bundleKey?: string | null;
   bundleSize?: number;
-  isBundleLead?: boolean;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -1281,7 +1280,7 @@ ${text}`);
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.41</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.42</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1360,7 +1359,7 @@ ${text}`);
               {(item.bundleSize ?? 1) > 1 && (
                 <View style={styles.bundleBadge}>
                   <Text style={styles.bundleBadgeText}>
-                    🔗 묶음 진단 {item.bundleSize}건 · 같은 장소{item.isBundleLead ? ' (대표)' : ''}
+                    🔗 묶음 진단 {item.bundleSize}건 · 같은 장소
                   </Text>
                 </View>
               )}

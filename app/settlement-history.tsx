@@ -37,11 +37,9 @@ interface RawBooking {
   isExportBooking?: boolean;
   agentBonus?: number | null;
   agentBonusMemo?: string | null;
-  // 묶음 진단 — 서버가 판정해서 내려준다. 한 장소를 한 번 이동해서 다 보므로
-  // 오지/긴급 추가금은 대표건 하나에만 붙는다.
+  // 묶음 진단 — 한 번 이동해서 여러 대를 보는 구조라 오지/긴급 추가금이 붙지 않는다.
   bundleKey?: string | null;
   bundleSize?: number;
-  isBundleLead?: boolean;
 }
 
 // 오지/준오지/긴급 추가금. 관리자가 예약 수정창을 열어 저장해야만 remoteBonus에 값이
@@ -74,15 +72,15 @@ const effectiveRemoteBonus = (
     remoteBonus?: number | null;
     preferredDateTime?: string;
     bundleKey?: string | null;
-    isBundleLead?: boolean;
+    bundleSize?: number;
   },
   tier: string,
 ): number => {
   // 관리자가 직접 넣은 금액은 묶음이든 아니든 그대로 존중한다.
   if (b.remoteBonus != null) return b.remoteBonus;
-  // 묶음의 비대표건은 추가 이동이 없어 자동 추가금이 붙지 않는다
-  // (대시보드 settlement.tsx의 effectiveRemoteBonus와 같은 기준).
-  if (b.bundleKey != null && b.isBundleLead === false) return 0;
+  // 묶음 건에는 오지/긴급 추가금이 붙지 않는다 — 한 장소로 한 번 이동해서 여러 대를
+  // 보는 구조라서다(대시보드 settlement.tsx의 effectiveRemoteBonus와 같은 기준).
+  if (b.bundleKey != null && (b.bundleSize ?? 1) > 1) return 0;
   const visitedAt = b.preferredDateTime || '';
   if (visitedAt < BONUS_AUTO_FROM) return 0;
   const rate =
