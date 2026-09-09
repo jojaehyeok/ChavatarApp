@@ -177,6 +177,10 @@ interface DiagnosisItem {
   isExportBooking?: boolean;
   remoteTier?: 'semi_remote' | 'remote' | null;
   nearestDriverKm?: number | null;
+  // 묶음 진단 — 같은 날 같은 장소의 여러 대. 서버가 대표 여부까지 판정해서 내려준다.
+  bundleKey?: string | null;
+  bundleSize?: number;
+  isBundleLead?: boolean;
   phoneNumber?: string;
   updatedAt?: string;
   completedAt?: string;
@@ -448,6 +452,10 @@ export default function DiagnosisManagement() {
   const [timeChanging, setTimeChanging] = useState(false);
 
   const [moreOptionsItem, setMoreOptionsItem] = useState<DiagnosisItem | null>(null);
+  // 현장에서 "같은 장소에 한 대 더 있다"고 붙일 때 쓰는 입력창
+  const [bundleAddItem, setBundleAddItem] = useState<DiagnosisItem | null>(null);
+  const [bundleCarNumber, setBundleCarNumber] = useState('');
+  const [bundleSaving, setBundleSaving] = useState(false);
   const [cancelItem, setCancelItem] = useState<DiagnosisItem | null>(null);
   const [contactEditItem, setContactEditItem] = useState<DiagnosisItem | null>(null);
   const [contactEditValue, setContactEditValue] = useState('');
@@ -935,6 +943,33 @@ ${text}`);
     ]);
   };
 
+  // 같은 장소에 차가 한 대 더 있을 때 평가사가 현장에서 붙인다. 서버가 원본 건의
+  // 방문지·일시·발주사·딜러를 복사해 같은 묶음으로 만들어주므로 차량번호만 받으면 된다.
+  const handleAddBundleVehicle = async () => {
+    const item = bundleAddItem;
+    const carNumber = bundleCarNumber.trim();
+    if (!item || !carNumber) { Alert.alert('알림', '차량번호를 입력해주세요.'); return; }
+    setBundleSaving(true);
+    try {
+      await axios.post(`${API_BASE_URL}/external/request/${item.id}/bundle-vehicle`, {
+        driverId: currentDriverId,
+        carNumber,
+      });
+      setBundleAddItem(null);
+      setBundleCarNumber('');
+      Alert.alert('추가 완료', `${carNumber} 건이 같은 일정에 추가되었습니다.`);
+      fetchData();
+    } catch (e) {
+      // 중복 차량번호(409)·담당자 아님(403)은 서버가 이유를 문장으로 주므로 그대로 보여준다
+      const msg = axios.isAxiosError(e)
+        ? (e.response?.data as { message?: string })?.message ?? '차량 추가에 실패했습니다.'
+        : '차량 추가에 실패했습니다.';
+      Alert.alert('오류', msg);
+    } finally {
+      setBundleSaving(false);
+    }
+  };
+
   const handleAcceptRounding = async (item: DiagnosisItem) => {
     setRoundingSaving(true);
     try {
@@ -1246,7 +1281,7 @@ ${text}`);
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.40</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.41</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1320,6 +1355,13 @@ ${text}`);
               {item.source?.startsWith('self-') && (
                 <View style={styles.outsourcedBadge}>
                   <Text style={styles.outsourcedBadgeText}>🤝 외주물건</Text>
+                </View>
+              )}
+              {(item.bundleSize ?? 1) > 1 && (
+                <View style={styles.bundleBadge}>
+                  <Text style={styles.bundleBadgeText}>
+                    🔗 묶음 진단 {item.bundleSize}건 · 같은 장소{item.isBundleLead ? ' (대표)' : ''}
+                  </Text>
                 </View>
               )}
               {activeTab === 'request' && item.remoteTier && (
@@ -1526,6 +1568,17 @@ ${text}`);
                   <Text style={[styles.contactOptionText, { color: theme.textMain }]}>라운딩 요청</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity
+                style={styles.contactOption}
+                onPress={() => {
+                  const item = moreOptionsItem!;
+                  setMoreOptionsItem(null);
+                  setTimeout(() => { setBundleAddItem(item); setBundleCarNumber(''); }, 300);
+                }}
+              >
+                <Ionicons name="add-circle-outline" size={22} color={theme.accent} />
+                <Text style={[styles.contactOptionText, { color: theme.textMain }]}>같은 장소 차량 추가</Text>
+              </TouchableOpacity>
               {isAgentTier && (
                 <TouchableOpacity
                   style={styles.contactOption}
@@ -1552,6 +1605,46 @@ ${text}`);
               </TouchableOpacity>
             </View>
           </Pressable>
+        </Modal>
+
+        <Modal visible={!!bundleAddItem} transparent animationType="slide">
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+            <Pressable style={styles.modalOverlay} onPress={() => setBundleAddItem(null)}>
+              <Pressable style={[styles.modalContent, { backgroundColor: theme.card }]} onPress={e => e.stopPropagation()}>
+                <View style={[styles.modalHandle, { backgroundColor: isDark ? '#444' : '#ddd' }]} />
+                <Text style={[styles.modalTitle, { color: theme.textMain }]}>같은 장소 차량 추가</Text>
+                <Text style={{ color: theme.textSub, fontSize: 13, marginBottom: 14, lineHeight: 19 }}>
+                  {bundleAddItem?.address}
+                  {'\n'}같은 방문지·같은 일정으로 한 건이 추가되고, 담당은 그대로 나입니다.
+                </Text>
+                <TextInput
+                  value={bundleCarNumber}
+                  onChangeText={setBundleCarNumber}
+                  placeholder="추가할 차량번호 (예: 12가 3456)"
+                  placeholderTextColor={theme.textSub}
+                  autoCorrect={false}
+                  style={{
+                    height: 50, borderRadius: 12, borderWidth: 1, borderColor: theme.border,
+                    backgroundColor: theme.timeSlotBg, paddingHorizontal: 14,
+                    fontSize: 16, fontWeight: '600', color: theme.textMain,
+                  }}
+                />
+                <TouchableOpacity
+                  style={{
+                    height: 52, borderRadius: 14, backgroundColor: theme.accent,
+                    alignItems: 'center', justifyContent: 'center', marginTop: 16,
+                    opacity: bundleSaving || !bundleCarNumber.trim() ? 0.5 : 1,
+                  }}
+                  disabled={bundleSaving || !bundleCarNumber.trim()}
+                  onPress={handleAddBundleVehicle}
+                >
+                  {bundleSaving
+                    ? <ActivityIndicator color="#fff" />
+                    : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>추가하기</Text>}
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </KeyboardAvoidingView>
         </Modal>
 
         <Modal visible={!!contactEditItem} transparent animationType="slide">
@@ -1895,6 +1988,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
   },
   remoteBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  bundleBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#7c3aed', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  bundleBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 
   dateStripScroll: { height: 72, minHeight: 72, maxHeight: 72, flexGrow: 0 },
   dateStripContent: { paddingHorizontal: 12, paddingVertical: 6, gap: 6, alignItems: 'stretch' },
