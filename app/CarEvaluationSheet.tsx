@@ -740,9 +740,15 @@ export default function CarEvaluationSheet() {
   const [vinImage, setVinImage] = useState<string | null>(null); // 차대번호(라벨)
 
   // 확인사항(경고등/옵션/누유) 항목별 첨부사진 — "기타의견" 사진첩과 안 섞이게
-  // 항목별로 따로 관리, 각 항목당 최대 3장. 주행중 이상/엔진룸 이상은 텍스트+사진 대신
+  // 항목별로 따로 관리. 주행중 이상/엔진룸 이상은 텍스트+사진 대신
   // 아래 "영상 추가"(엔진 이음/조향 이음/옵션작동 이상 등) 하나로 통합됨.
+  //
+  // 기본 3장이지만 누유는 부위가 여러 곳(엔진·미션·쇼바·호스 등)이라 3장으로는
+  // 부족하다는 평가사 요청으로 8장까지 받는다.
   const MAX_CHECKLIST_PHOTOS = 3;
+  const CHECKLIST_PHOTO_LIMITS: Record<string, number> = { leak: 8 };
+  const checklistPhotoLimit = (photoKey: string) =>
+    CHECKLIST_PHOTO_LIMITS[photoKey] ?? MAX_CHECKLIST_PHOTOS;
   const [checklistPhotos, setChecklistPhotos] = useState<Record<string, string[]>>({
     warning: [],
     options: [],
@@ -1508,10 +1514,11 @@ export default function CarEvaluationSheet() {
     }
   };
 
-  // ─── 확인사항 항목별 사진(경고등/옵션/누유, 각 최대 3장) ───────────────
+  // ─── 확인사항 항목별 사진(경고등/옵션 3장, 누유 8장) ───────────────────
   const pickChecklistPhoto = async (photoKey: string) => {
+    const limit = checklistPhotoLimit(photoKey);
     const already = checklistPhotos[photoKey]?.length || 0;
-    const remaining = MAX_CHECKLIST_PHOTOS - already;
+    const remaining = limit - already;
     if (remaining <= 0) return;
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -1531,7 +1538,7 @@ export default function CarEvaluationSheet() {
     const newUris = result.assets.map((a) => a.uri).slice(0, remaining);
     setChecklistPhotos((prev) => ({
       ...prev,
-      [photoKey]: [...(prev[photoKey] || []), ...newUris].slice(0, MAX_CHECKLIST_PHOTOS),
+      [photoKey]: [...(prev[photoKey] || []), ...newUris].slice(0, limit),
     }));
     newUris.forEach((uri) => uploadChecklistPhoto(uri, photoKey));
   };
@@ -3506,7 +3513,7 @@ export default function CarEvaluationSheet() {
                           </View>
                         );
                       })}
-                      {!isViewMode && (checklistPhotos[item.photoKey]?.length || 0) < MAX_CHECKLIST_PHOTOS && (
+                      {!isViewMode && (checklistPhotos[item.photoKey]?.length || 0) < checklistPhotoLimit(item.photoKey) && (
                         <View style={styles.photoWrapperGrid}>
                           <TouchableOpacity
                             style={[styles.photoItemGrid, styles.gridAddBtn]}

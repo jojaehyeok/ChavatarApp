@@ -1246,7 +1246,7 @@ ${text}`);
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.39</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.40</Text>
               </View>
             </Animated.View>
           </Pressable>
