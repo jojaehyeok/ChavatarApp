@@ -3488,9 +3488,14 @@ export default function CarEvaluationSheet() {
                               style={styles.photoItemGrid}
                               onPress={() => {
                                 if (isUploading) return;
-                                setViewerImages([uri]);
-                                setViewerIndex(0);
-                                setViewerVisible(true);
+                                // 누른 한 장만 넘기면 뷰어에서 좌우로 넘길 수 없다(누유는 최대 8장).
+                                // 그 항목의 사진 전체를 넘기고 누른 위치에서 열리게 한다 — 기타의견
+                                // 사진첩과 같은 방식. 아직 업로드 중인 사진은 눌리지도 않으니 빼고
+                                // 순번을 다시 맞춘다(안 빼면 누른 사진과 다른 장이 열린다).
+                                const uploaded = (checklistPhotos[item.photoKey] || []).filter(
+                                  (u) => isPractice || u.startsWith("http"),
+                                );
+                                openViewer(uploaded, Math.max(0, uploaded.indexOf(uri)));
                               }}
                               disabled={isUploading}
                             >
