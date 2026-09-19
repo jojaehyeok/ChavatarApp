@@ -34,6 +34,9 @@ interface RawBooking {
   extraFeeMemo?: string | null;
   claimDeduction?: number | null;
   source?: string;
+  // 상품구분 — 구매동행/비대면검차. 비대면검차도 카비어가 고객에게 직접 받고 바로
+  // 지급하는 건이라 구매동행과 같이 직접지급으로 본다.
+  requestType?: 'PURCHASE_ESCORT' | 'REMOTE_INSPECTION' | null;
   isExportBooking?: boolean;
   agentBonus?: number | null;
   agentBonusMemo?: string | null;
@@ -98,10 +101,18 @@ interface SettlementRow extends RawBooking {
 
 const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, '0')}`;
 
-// 수출건/구매동행(개인거래)은 현장에서 바로 입금해드려서 이 정산에 다시 잡으면 중복이라 0원 처리 —
-// 대신 왜 0원인지 알 수 있게 라벨을 보여준다.
-const isDirectPaidBooking = (item: RawBooking) => !!item.isExportBooking || item.source === 'CARVIOR_INSPECTION';
-const directPaidLabel = (item: RawBooking) => item.isExportBooking ? '🚢 수출건 · 직접지급 완료' : '🧑 구매동행(개인거래) · 직접지급 완료';
+// 수출건/구매동행(개인거래)/비대면검차는 현장에서 바로 입금해드려서 이 정산에 다시 잡으면
+// 중복이라 0원 처리 — 대신 왜 0원인지 알 수 있게 라벨을 보여준다.
+// requestType이 없는(null) 기존 건은 예전처럼 source로만 판정되므로 금액이 바뀌지 않는다.
+const isDirectPaidBooking = (item: RawBooking) =>
+  !!item.isExportBooking ||
+  item.source === 'CARVIOR_INSPECTION' ||
+  item.requestType === 'PURCHASE_ESCORT' ||
+  item.requestType === 'REMOTE_INSPECTION';
+const directPaidLabel = (item: RawBooking) =>
+  item.isExportBooking ? '🚢 수출건 · 직접지급 완료'
+    : item.requestType === 'REMOTE_INSPECTION' ? '💻 비대면검차 · 직접지급 완료'
+      : '🧑 구매동행(개인거래) · 직접지급 완료';
 
 export default function SettlementHistoryScreen() {
   const router = useRouter();

@@ -166,6 +166,9 @@ interface DiagnosisItem {
   additionalMemo?: string | null;
   preferredDateTime: string;
   source: string;
+  // 상품구분 — 구매동행/비대면검차. 둘 다 카비어가 고객에게 직접 받는 건이라 진단비를
+  // 현장에서 바로 지급하고 월정산에는 0원으로 잡힌다(settlement-history.tsx와 같은 기준).
+  requestType?: 'PURCHASE_ESCORT' | 'REMOTE_INSPECTION' | null;
   serviceType?: string;
   assignedDriverId?: string | null;
   assignedDriverName?: string | null;
@@ -1280,7 +1283,7 @@ ${text}`);
                 </TouchableOpacity>
               </Pressable>
               <View style={[styles.drawerFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.44</Text>
+                <Text style={[styles.drawerFooterText, { color: theme.textSub }]}>v1.4.45</Text>
               </View>
             </Animated.View>
           </Pressable>
@@ -1354,6 +1357,18 @@ ${text}`);
               {item.source?.startsWith('self-') && (
                 <View style={styles.outsourcedBadge}>
                   <Text style={styles.outsourcedBadgeText}>🤝 외주물건</Text>
+                </View>
+              )}
+              {/* 상품구분 — 수락 전에 어떤 상품인지 알 수 있게. 구분이 없는(requestType null)
+                  기존 발주사 건은 지금처럼 아무 배지도 안 붙는다. */}
+              {item.requestType === 'PURCHASE_ESCORT' && (
+                <View style={styles.escortBadge}>
+                  <Text style={styles.escortBadgeText}>🧑 구매동행</Text>
+                </View>
+              )}
+              {item.requestType === 'REMOTE_INSPECTION' && (
+                <View style={styles.remoteInspectionBadge}>
+                  <Text style={styles.remoteInspectionBadgeText}>💻 비대면검차</Text>
                 </View>
               )}
               {(item.bundleSize ?? 1) > 1 && (
@@ -1978,6 +1993,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
   },
   outsourcedBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  escortBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#0f766e', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  escortBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  remoteInspectionBadge: {
+    alignSelf: 'flex-start', backgroundColor: '#4f46e5', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
+  },
+  remoteInspectionBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
   remoteBadge: {
     alignSelf: 'flex-start', backgroundColor: '#dc2626', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 4, marginBottom: 8,
