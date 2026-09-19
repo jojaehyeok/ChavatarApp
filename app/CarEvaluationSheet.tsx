@@ -362,16 +362,21 @@ function IssueVideoRecorderModal({
   visible,
   onClose,
   onRecorded,
+  maxSec = ISSUE_VIDEO_MAX_SEC,
+  guide,
 }: {
   visible: boolean;
   onClose: () => void;
   onRecorded: (uri: string) => void;
+  // 360 촬영은 길이/안내문구가 달라서 주입받는다(녹화 로직은 동일해서 이 모달을 같이 쓴다).
+  maxSec?: number;
+  guide?: string;
 }) {
   const cameraRef = useRef<CameraView>(null);
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const [micPerm, requestMicPerm] = useMicrophonePermissions();
   const [recording, setRecording] = useState(false);
-  const [countdown, setCountdown] = useState(ISSUE_VIDEO_MAX_SEC);
+  const [countdown, setCountdown] = useState(maxSec);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -388,12 +393,12 @@ function IssueVideoRecorderModal({
   const startRecording = async () => {
     if (!cameraRef.current || recording) return;
     setRecording(true);
-    setCountdown(ISSUE_VIDEO_MAX_SEC);
+    setCountdown(maxSec);
     countdownTimer.current = setInterval(() => {
       setCountdown((c) => (c > 0 ? c - 1 : 0));
     }, 1000);
     try {
-      const video = await cameraRef.current.recordAsync({ maxDuration: ISSUE_VIDEO_MAX_SEC });
+      const video = await cameraRef.current.recordAsync({ maxDuration: maxSec });
       clearCountdown();
       setRecording(false);
       if (video?.uri) onRecorded(video.uri);
@@ -451,6 +456,17 @@ function IssueVideoRecorderModal({
             }}
           >
             <Text style={{ color: "#fff", fontWeight: "bold", fontSize: 16 }}>{countdown}초 남음</Text>
+          </View>
+        )}
+
+        {!!guide && permsGranted && (
+          <View
+            style={{
+              position: "absolute", bottom: 150, alignSelf: "center", maxWidth: "85%",
+              backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
+            }}
+          >
+            <Text style={{ color: "#fff", fontSize: 13, textAlign: "center", lineHeight: 19 }}>{guide}</Text>
           </View>
         )}
 
@@ -760,6 +776,11 @@ export default function CarEvaluationSheet() {
   const [issueVideoUploading, setIssueVideoUploading] = useState(false);
   const [issueVideoModalVisible, setIssueVideoModalVisible] = useState(false);
   const [issueVideoRecorderVisible, setIssueVideoRecorderVisible] = useState(false);
+  // 360 회전 뷰어용 한바퀴 영상 — 스마트옥션 출품 대상만 찍으므로 선택 항목이다.
+  const [video360, setVideo360] = useState<string | null>(null);
+  const [video360Uploading, setVideo360Uploading] = useState(false);
+  const [video360RecorderVisible, setVideo360RecorderVisible] = useState(false);
+  const [video360ModalVisible, setVideo360ModalVisible] = useState(false);
 
   // 1. 상단에 추가할 상태값 (컴포넌트 내부)
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
@@ -1225,6 +1246,7 @@ export default function CarEvaluationSheet() {
       setVinImage(imgs.vin?.[0] ?? null);
       setChecklistPhotos(d.checklistPhotos || { warning: [], options: [], leak: [] });
       setIssueVideo(d.videoUrls?.[0] ?? d.engineNoiseVideoUrl ?? null);
+      setVideo360(d.video360Url ?? null);
       setImages({
         exterior: imgs.exterior ?? [],
         wheel: imgs.wheel ?? [],
@@ -1686,6 +1708,59 @@ export default function CarEvaluationSheet() {
     setIssueVideo(null);
   };
 
+  // ─── 360 한바퀴 영상 (스마트옥션 출품용, 선택) ────────────────────────────────
+  const VIDEO_360_MAX_SEC = 12;
+
+  const handleVideo360Recorded = (uri: string) => {
+    setVideo360(uri);
+    uploadVideo360(uri);
+  };
+
+  const handleDeleteVideo360 = () => {
+    setVideo360(null);
+  };
+
+  // 업로드 흐름은 uploadIssueVideo와 동일 — category만 달라서 서버에서 구분된다.
+  const uploadVideo360 = async (uri: string, attempt = 1) => {
+    if (isPractice) return;
+    setVideo360Uploading(true);
+    try {
+      const formData = new FormData();
+      const fileName = `video_360_${Date.now()}.mp4`;
+
+      // @ts-ignore
+      formData.append("file", {
+        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
+        name: fileName,
+        type: "video/mp4",
+      });
+      formData.append("requestId", String(requestId || ""));
+      formData.append("category", "video_360");
+      formData.append("carNumber", String(carNumber || "미등록"));
+
+      const res = await fetch(`${API_BASE_URL}/external/inspection/upload`, {
+        method: "POST",
+        body: formData,
+        headers: { Accept: "application/json" },
+      });
+
+      if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+      const result = await res.json();
+      if (result.url) {
+        setVideo360((prev) => (prev === uri ? result.url : prev));
+      }
+    } catch (e) {
+      console.error("🔥 Upload Error (360 Video):", e);
+      if (attempt < 3) {
+        setTimeout(() => uploadVideo360(uri, attempt + 1), 1500 * attempt);
+        return;
+      }
+      showAlert("업로드 실패", "360 영상 업로드에 실패했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+    } finally {
+      setVideo360Uploading(false);
+    }
+  };
+
   // 3. 사진 삭제 함수
   const removeExtraPhoto = (index: number) => {
     setExtraPhotos(extraPhotos.filter((_, i) => i !== index));
@@ -1786,6 +1861,8 @@ export default function CarEvaluationSheet() {
         // 엔진 이음/조향 이음/옵션작동 이상 등 확인용 영상 — 백엔드 Inspection.videoUrls와
         // 짝을 이루는 최상위 필드(photos 안에 넣으면 서버가 무시하고 저장 안 함)
         videoUrls: onlyS3(issueVideo ? [issueVideo] : []),
+        // 360 회전 뷰어용 한바퀴 영상(선택) — 업로드가 안 끝났으면 저장하지 않는다.
+        video360Url: onlyS3(video360 ? [video360] : [])[0] ?? null,
         // 차키
         keys: {
           smart: smartKey,
@@ -3760,6 +3837,89 @@ export default function CarEvaluationSheet() {
                 )}
               </View>
             </View>
+
+            {/* ═══ 360 한바퀴 영상 (선택) ══════════════════════════════════════ */}
+            <View style={styles.catBox}>
+              <Text style={styles.catTitle}>360 회전 영상 (선택)</Text>
+              <Text style={[styles.catCountText, { marginBottom: 8 }]}>
+                스마트옥션에 올릴 차량만 촬영하세요. 딜러가 매물 화면에서 드래그로 돌려봅니다.
+              </Text>
+              {!isViewMode && (
+                <View style={styles.videoGuideBox}>
+                  <Text style={styles.videoGuideItem}>✔ 차에서 3~4m 떨어져 한 바퀴를 천천히 걸으며 촬영</Text>
+                  <Text style={styles.videoGuideItem}>✔ 차가 항상 화면 가운데 오도록, 높이는 일정하게</Text>
+                  <Text style={styles.videoGuideItem}>✔ 출발한 자리로 정확히 돌아와야 회전이 자연스럽게 이어집니다</Text>
+                </View>
+              )}
+              <View style={styles.photoGrid}>
+                {video360 ? (
+                  <View style={styles.photoWrapperGrid}>
+                    <TouchableOpacity
+                      style={{ width: "100%", height: "100%", borderRadius: 8, overflow: "hidden" }}
+                      activeOpacity={0.85}
+                      onPress={() => !video360Uploading && setVideo360ModalVisible(true)}
+                      disabled={video360Uploading}
+                    >
+                      {video360Uploading ? (
+                        <View style={styles.uploadingOverlay}>
+                          <ActivityIndicator size="small" color="#fff" />
+                        </View>
+                      ) : (
+                        <>
+                          <VideoGridThumb uri={video360} />
+                          <View style={styles.uploadingOverlay}>
+                            <Ionicons name="play-circle" size={28} color="rgba(255,255,255,0.9)" />
+                          </View>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                    {!isViewMode && (
+                      <TouchableOpacity
+                        style={styles.removeBadgeGrid}
+                        onPress={() => showAlert("영상 삭제", "등록된 360 영상을 삭제할까요?", [
+                          { text: "삭제", style: "destructive", onPress: handleDeleteVideo360 },
+                          { text: "취소", style: "cancel" },
+                        ])}
+                      >
+                        <Ionicons name="close-circle" size={22} color="#ff4d4d" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ) : (
+                  !isViewMode && (
+                    <TouchableOpacity
+                      style={[styles.photoWrapperGrid, styles.gridAddBtn]}
+                      onPress={() => setVideo360RecorderVisible(true)}
+                    >
+                      <Ionicons name="sync-outline" size={22} color="#666" />
+                      <Text style={styles.gridAddText}>360 촬영</Text>
+                    </TouchableOpacity>
+                  )
+                )}
+              </View>
+            </View>
+
+            {/* 360 영상 전체화면 모달 */}
+            <Modal visible={video360ModalVisible} transparent animationType="fade" onRequestClose={() => setVideo360ModalVisible(false)}>
+              <View style={{ flex: 1, backgroundColor: "#000" }}>
+                <TouchableOpacity
+                  style={{ position: "absolute", top: 50, right: 20, zIndex: 999 }}
+                  onPress={() => setVideo360ModalVisible(false)}
+                >
+                  <Ionicons name="close-circle" size={36} color="#fff" />
+                </TouchableOpacity>
+                {video360 && <VideoFullscreenPlayer uri={video360} />}
+              </View>
+            </Modal>
+
+            {/* 360 촬영 모달 — 이상확인 영상과 같은 녹화기를 길이/안내만 바꿔서 재사용 */}
+            <IssueVideoRecorderModal
+              visible={video360RecorderVisible}
+              onClose={() => setVideo360RecorderVisible(false)}
+              onRecorded={handleVideo360Recorded}
+              maxSec={VIDEO_360_MAX_SEC}
+              guide={"차 주위를 한 바퀴 천천히 걸으세요\n출발한 자리로 돌아오면 자동으로 끝납니다"}
+            />
 
             {/* 영상 전체화면 모달 */}
             <Modal visible={issueVideoModalVisible} transparent animationType="fade" onRequestClose={() => setIssueVideoModalVisible(false)}>
