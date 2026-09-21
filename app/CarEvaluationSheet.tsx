@@ -54,6 +54,9 @@ const { width, height } = Dimensions.get("window");
 const API_BASE_URL = "https://carvior.store/api/v1";
 const TILE_SIZE = 85;
 
+// 탁송 가능 여부 — 서버(bookings.transportStatus)와 같은 값을 쓴다
+type TransportStatus = "AVAILABLE" | "CONDITIONAL" | "UNAVAILABLE";
+
 // ─── 전역 업로드 싱글톤 (컴포넌트 언마운트 후에도 계속 실행됨) ─────────────────
 interface _UploadTask {
   uri: string;
@@ -770,6 +773,94 @@ export default function CarEvaluationSheet() {
     options: [],
     leak: [],
   });
+
+  // ── 탁송 가능 여부 ───────────────────────────────────────────────────────
+  // 진단은 끝났는데 배터리가 방전돼 있거나 시동이 안 걸려서 탁송 기사가 헛걸음하는 일을
+  // 줄이려는 값 — 차가 눈앞에 있는 평가사가 "확인사항" 헤더의 ⋮에서 표시한다.
+  // 리포트 내용이 아니라 배차가 보는 값이라 예약(booking)에 저장되며, 제출 버튼과 무관하게
+  // 고르는 즉시 서버에 저장된다(진단 제출 전이라도 배차는 미리 알아야 함).
+  // 표시 안 한 상태(null)는 "탁송 가능"이 아니라 "아직 확인 안 됨"이다.
+  const TRANSPORT_REASONS = ["배터리 방전", "경고등 점등", "시동 불량", "브레이크 이상"];
+  const TRANSPORT_LABEL: Record<TransportStatus, string> = {
+    AVAILABLE: "🟢 탁송 가능",
+    CONDITIONAL: "🟡 조건부 탁송 가능",
+    UNAVAILABLE: "🔴 로드 탁송 불가",
+  };
+  const [transportStatus, setTransportStatus] = useState<TransportStatus | null>(null);
+  const [transportReasons, setTransportReasons] = useState<string[]>([]);
+  const [transportNote, setTransportNote] = useState("");
+  const [transportModalVisible, setTransportModalVisible] = useState(false);
+  const [transportSaving, setTransportSaving] = useState(false);
+  // 모달에서 고르는 중인 값 — "저장"을 눌러야 위 확정 상태에 반영된다.
+  const [draftTransport, setDraftTransport] = useState<TransportStatus | null>(null);
+  const [draftReasons, setDraftReasons] = useState<string[]>([]);
+  const [draftNote, setDraftNote] = useState("");
+
+  // 이미 표시해둔 값 불러오기 — 진단을 이어서 하거나 내역을 다시 열어봐도 그대로 보이게.
+  useEffect(() => {
+    if (isPractice || !requestId) return;
+    fetch(`${API_BASE_URL}/external/request/${requestId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setTransportStatus(d.transportStatus ?? null);
+        setTransportReasons(d.transportReasons ?? []);
+        setTransportNote(d.transportNote ?? "");
+      })
+      .catch(() => {});
+  }, [requestId]);
+
+  const openTransportModal = () => {
+    setDraftTransport(transportStatus);
+    setDraftReasons(transportReasons);
+    setDraftNote(transportNote);
+    setTransportModalVisible(true);
+  };
+
+  const toggleTransportReason = (reason: string) =>
+    setDraftReasons((prev) =>
+      prev.includes(reason) ? prev.filter((r) => r !== reason) : [...prev, reason],
+    );
+
+  const saveTransportStatus = async () => {
+    if (!draftTransport || transportSaving) return;
+    const isConditional = draftTransport === "CONDITIONAL";
+    const reasons = isConditional ? draftReasons : [];
+    const note = isConditional ? draftNote.trim() : "";
+
+    const applyLocally = () => {
+      setTransportStatus(draftTransport);
+      setTransportReasons(reasons);
+      setTransportNote(note);
+      setTransportModalVisible(false);
+    };
+
+    // 연습 모드는 서버에 아무것도 남기지 않는다(사진 업로드와 같은 원칙)
+    if (isPractice) {
+      applyLocally();
+      return;
+    }
+
+    setTransportSaving(true);
+    try {
+      const driverId = await AsyncStorage.getItem("driverId");
+      const res = await fetch(`${API_BASE_URL}/external/request/${requestId}/transport-status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ driverId, status: draftTransport, reasons, note }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        showAlert("저장 실패", body?.message || "탁송 가능 여부를 저장하지 못했습니다.");
+        return;
+      }
+      applyLocally();
+    } catch {
+      showAlert("저장 실패", "네트워크 상태를 확인한 뒤 다시 시도해주세요.");
+    } finally {
+      setTransportSaving(false);
+    }
+  };
 
   // 영상 추가 (엔진 이음/조향 이음/옵션작동 이상 등, 한 건만 등록 — 재촬영 시 교체)
   const [issueVideo, setIssueVideo] = useState<string | null>(null); // 업로드 중엔 로컬 URI, 완료되면 S3 URL
@@ -3474,9 +3565,34 @@ export default function CarEvaluationSheet() {
             <View style={styles.grayDivider} />
 
             {/* ═══ 4. 확인사항 ════════════════════════════════════════════════ */}
-            <View style={styles.sectionHeader}>
+            <View style={[styles.sectionHeader, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}>
               <Text style={styles.sectionTitle}>확인사항</Text>
+              {/* 탁송 가능 여부 — 읽기전용 모드에선 아래 상태 줄로만 보여준다 */}
+              {!isViewMode && (
+                <TouchableOpacity onPress={openTransportModal} style={{ padding: 4 }} hitSlop={10}>
+                  <Ionicons name="ellipsis-vertical" size={22} color="#888" />
+                </TouchableOpacity>
+              )}
             </View>
+
+            {/* 표시해둔 탁송 상태 — 아직 표시 안 했으면 아무것도 안 뜬다 */}
+            {transportStatus && (
+              <TouchableOpacity
+                style={styles.transportRow}
+                onPress={isViewMode ? undefined : openTransportModal}
+                activeOpacity={isViewMode ? 1 : 0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.transportLabel}>{TRANSPORT_LABEL[transportStatus]}</Text>
+                  {transportStatus === "CONDITIONAL" && (transportReasons.length > 0 || !!transportNote) && (
+                    <Text style={styles.transportReasonText}>
+                      {[...transportReasons, transportNote].filter(Boolean).join(" · ")}
+                    </Text>
+                  )}
+                </View>
+                {!isViewMode && <Ionicons name="chevron-forward" size={20} color="#555" />}
+              </TouchableOpacity>
+            )}
 
             {[
               {
@@ -3941,6 +4057,79 @@ export default function CarEvaluationSheet() {
               onRecorded={handleIssueVideoRecorded}
             />
 
+            {/* 탁송 가능 여부 선택 — "확인사항" 헤더의 ⋮에서 열린다 */}
+            <Modal
+              visible={transportModalVisible}
+              transparent
+              animationType="slide"
+              onRequestClose={() => setTransportModalVisible(false)}
+            >
+              <Pressable style={styles.modalOverlay} onPress={() => setTransportModalVisible(false)}>
+                <Pressable style={[styles.modalSheet, { maxHeight: "85%" }]} onPress={() => {}}>
+                  <Text style={styles.modalTitle}>탁송 가능 여부</Text>
+                  <View style={styles.modalDivider} />
+                  <ScrollView keyboardShouldPersistTaps="handled">
+                    {(["AVAILABLE", "CONDITIONAL", "UNAVAILABLE"] as TransportStatus[]).map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        style={styles.transportOption}
+                        onPress={() => setDraftTransport(s)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.transportOptionText}>{TRANSPORT_LABEL[s]}</Text>
+                        <Ionicons
+                          name={draftTransport === s ? "radio-button-on" : "radio-button-off"}
+                          size={24}
+                          color={draftTransport === s ? "#fff" : "#555"}
+                        />
+                      </TouchableOpacity>
+                    ))}
+
+                    {/* 조건부일 때만 사유를 받는다 */}
+                    {draftTransport === "CONDITIONAL" && (
+                      <View style={{ paddingHorizontal: 20, paddingTop: 6, paddingBottom: 12 }}>
+                        <Text style={styles.transportHint}>사유 (해당되는 것 모두)</Text>
+                        {TRANSPORT_REASONS.map((reason) => (
+                          <TouchableOpacity
+                            key={reason}
+                            style={styles.transportReasonRow}
+                            onPress={() => toggleTransportReason(reason)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.transportOptionText}>{reason}</Text>
+                            <Ionicons
+                              name={draftReasons.includes(reason) ? "checkbox" : "square-outline"}
+                              size={24}
+                              color={draftReasons.includes(reason) ? "#fff" : "#555"}
+                            />
+                          </TouchableOpacity>
+                        ))}
+                        <TextInput
+                          style={[styles.tArea, { marginTop: 10, height: 70 }]}
+                          placeholder="기타 사유를 직접 입력하세요"
+                          placeholderTextColor="#444"
+                          multiline
+                          value={draftNote}
+                          onChangeText={setDraftNote}
+                        />
+                      </View>
+                    )}
+                  </ScrollView>
+                  <TouchableOpacity
+                    style={[styles.modalConfirmBtn, !draftTransport && { opacity: 0.4 }]}
+                    onPress={saveTransportStatus}
+                    disabled={!draftTransport || transportSaving}
+                  >
+                    {transportSaving ? (
+                      <ActivityIndicator size="small" color="#000" />
+                    ) : (
+                      <Text style={styles.btnTextB}>저장</Text>
+                    )}
+                  </TouchableOpacity>
+                </Pressable>
+              </Pressable>
+            </Modal>
+
             {/* ═══ 6. 기타 의견 ═══════════════════════════════════════════════ */}
             <View style={styles.catBox}>
               <Text style={styles.catTitle}>기타 의견</Text>
@@ -4330,6 +4519,39 @@ const styles = StyleSheet.create({
   // 기타의견도 같은 스타일 공유) 라벨·입력 텍스트 크기를 키움
   toggleLabel: { color: "#fff", fontSize: 21 },
   expandArea: { paddingHorizontal: 20, paddingBottom: 15 },
+
+  // 탁송 가능 여부 (확인사항 헤더 ⋮ → 선택 결과가 이 줄로 남는다)
+  transportRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 20,
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: "#111",
+    borderWidth: 1,
+    borderColor: "#222",
+  },
+  transportLabel: { color: "#fff", fontSize: 19, fontWeight: "700" },
+  transportReasonText: { color: "#aaa", fontSize: 15, marginTop: 4, lineHeight: 21 },
+  transportOption: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#2a2a2a",
+  },
+  transportOptionText: { color: "#fff", fontSize: 19 },
+  transportReasonRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  transportHint: { color: "#888", fontSize: 14, marginBottom: 4 },
+
   tArea: {
     backgroundColor: "#111",
     color: "#fff",
