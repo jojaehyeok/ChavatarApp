@@ -573,6 +573,7 @@ export default function CarEvaluationSheet() {
     mode,
     adminRequest,
     listingUrl,
+    isExportBooking,
     carSpecManufacturer: carSpecManufacturerParam,
     carSpecModel: carSpecModelParam,
     carSpecBadge: carSpecBadgeParam,
@@ -742,6 +743,8 @@ export default function CarEvaluationSheet() {
 
   // serviceType: 'INSPECTION_DELIVERY' | 'EVALUATION_DELIVERY'
   const isInspection = serviceType === "INSPECTION_DELIVERY";
+  // 수출전용 발주사(관리자 계정에 isExportOnly 표시)의 건 — 목록에서 '1'로 넘겨준다
+  const isExport = String(isExportBooking || "") === "1";
   const isEditMode = mode === "edit";
   const isViewMode = mode === "view";
   // 연습 모드 — 평가사가 실제 진단 화면 흐름을 미리 익혀볼 수 있게 하되,
@@ -2604,7 +2607,9 @@ export default function CarEvaluationSheet() {
 
         {/* 네비게이션 헤더 */}
         <View style={styles.navHeader}>
+          {/* 뒤로가기와 오른쪽 여백(48)을 같은 너비로 맞춰야 가운데 제목이 실제로 가운데 온다 */}
           <TouchableOpacity
+            style={{ width: 48 }}
             onPress={async () => {
               // 연타 방지 — 겹쳐 실행된 saveData()끼리 AsyncStorage 쓰기 순서가 꼬여서
               // 방금 찍은 사진이 적게 저장된 스냅샷에 덮어써지는 걸 막는다.
@@ -3955,6 +3960,9 @@ export default function CarEvaluationSheet() {
             </View>
 
             {/* ═══ 360 한바퀴 영상 (선택) ══════════════════════════════════════ */}
+            {/* 수출전용 발주사 건에서만 촬영한다. 다른 발주사 건이라도 예전에 찍어둔
+                영상이 있으면 그건 계속 보이게 둔다(이미 올라간 걸 숨기면 안 됨). */}
+            {(isExport || !!video360) && (
             <View style={styles.catBox}>
               <Text style={styles.catTitle}>360 회전 영상 (선택)</Text>
               <Text style={[styles.catCountText, { marginBottom: 8 }]}>
@@ -4014,6 +4022,7 @@ export default function CarEvaluationSheet() {
                 )}
               </View>
             </View>
+            )}
 
             {/* 360 영상 전체화면 모달 */}
             <Modal visible={video360ModalVisible} transparent animationType="fade" onRequestClose={() => setVideo360ModalVisible(false)}>
@@ -4064,8 +4073,18 @@ export default function CarEvaluationSheet() {
               animationType="slide"
               onRequestClose={() => setTransportModalVisible(false)}
             >
+              {/* Modal은 부모의 KeyboardAvoidingView 밖(별도 네이티브 창)이라 여기서 다시
+                  감싸야 기타 사유 입력칸이 키보드에 안 가린다 — 차량정보 수정 모달과 같은 처리 */}
+              <KeyboardAvoidingView
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                style={{ flex: 1 }}
+              >
               <Pressable style={styles.modalOverlay} onPress={() => setTransportModalVisible(false)}>
-                <Pressable style={[styles.modalSheet, { maxHeight: "85%" }]} onPress={() => {}}>
+                {/* 하단 내비게이션 바에 "저장" 버튼이 가려지지 않게 그만큼 띄운다 */}
+                <Pressable
+                  style={[styles.modalSheet, { maxHeight: "85%", paddingBottom: Math.max(insets.bottom, 12) }]}
+                  onPress={() => {}}
+                >
                   <Text style={styles.modalTitle}>탁송 가능 여부</Text>
                   <View style={styles.modalDivider} />
                   <ScrollView keyboardShouldPersistTaps="handled">
@@ -4128,6 +4147,7 @@ export default function CarEvaluationSheet() {
                   </TouchableOpacity>
                 </Pressable>
               </Pressable>
+              </KeyboardAvoidingView>
             </Modal>
 
             {/* ═══ 6. 기타 의견 ═══════════════════════════════════════════════ */}
@@ -4288,7 +4308,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 15,
   },
-  navTitle: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  navTitle: { color: "#fff", fontSize: 21, fontWeight: "bold", flex: 1, textAlign: "center" },
   container: { flex: 1 },
   carSummaryBar: {
     backgroundColor: "#111",
