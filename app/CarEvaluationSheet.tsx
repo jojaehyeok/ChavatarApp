@@ -13,6 +13,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from "expo-camera";
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import * as MediaLibrary from "expo-media-library";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -63,6 +64,9 @@ interface _UploadTask {
   categoryId: string;
   requestId: string;
   carNumber: string;
+  // JPEG로 변환한 사본의 경로 — 재시도 때 다시 변환하지 않으려고 보관한다.
+  // 화면에 그리고 완료 처리에 쓰는 기준은 어디까지나 원본 uri다.
+  uploadUri?: string;
 }
 const SINGLE_IMG_CATS = ['dashboard', 'registration', 'vin', 'extra_memo'];
 // 계기판/등록증/보험이력 — images 맵이 아니라 dashboardImage/regImage/vinImage 별도 state로
@@ -181,13 +185,34 @@ function PickerGridThumb({
 // 항상 보존되므로 다시 5로 되돌림.
 const MAX_CONCURRENT_UPLOADS = 5;
 
+// 아이폰은 사진을 JPEG가 아니라 HEIC로 저장한다(설정 > 카메라 > 포맷 > 고효율).
+// 그걸 그대로 올리면 파일 이름만 .jpg일 뿐 내용은 HEIC여서, 안드로이드·PC 브라우저에선
+// 리포트 사진이 한 장도 안 보인다. 서버에도 폴백 변환을 넣어뒀지만, 올리기 전에 JPEG로
+// 바꾸면 3MB짜리가 300KB로 줄어 현장 네트워크에서 업로드 자체가 훨씬 빨라진다.
+// 변환이 실패하면 원본 URI 그대로 올린다 — 서버 폴백이 받아준다.
+const toUploadableJpeg = async (uri: string): Promise<string> => {
+  try {
+    const out = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 1600 } }],
+      { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+    );
+    return out.uri;
+  } catch {
+    return uri;
+  }
+};
+
 // 현장 네트워크가 불안정할 수 있어 업로드 실패 시 3회까지 재시도한다.
 // 그래도 실패하면 조용히 사라지지 않고 onFailed로 알려서 UI에서 재시도할 수 있게 한다.
 const _runTask = async (task: _UploadTask, attempt = 1): Promise<void> => {
   const formData = new FormData();
+  // 올리기 직전에 JPEG로 맞춘다(아이폰 HEIC 대응). 재시도 때마다 다시 변환하지 않도록
+  // 첫 변환 결과를 태스크에 기억해둔다.
+  if (!task.uploadUri) task.uploadUri = await toUploadableJpeg(task.uri);
   // @ts-ignore
   formData.append("file", {
-    uri: task.uri,
+    uri: task.uploadUri,
     name: `photo_${Date.now()}.jpg`,
     type: "image/jpeg",
   });
@@ -1664,10 +1689,12 @@ export default function CarEvaluationSheet() {
     try {
       const formData = new FormData();
       const fileName = `checklist_${photoKey}_${Date.now()}.jpg`;
+      // 기본 사진과 같은 이유로 올리기 전에 JPEG로 맞춘다(아이폰 HEIC 대응)
+      const sendUri = await toUploadableJpeg(uri);
 
       // @ts-ignore
       formData.append("file", {
-        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
+        uri: Platform.OS === "android" ? sendUri : sendUri.replace("file://", ""),
         name: fileName,
         type: "image/jpeg",
       });
